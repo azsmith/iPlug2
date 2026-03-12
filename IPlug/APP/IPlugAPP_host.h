@@ -231,6 +231,8 @@ private:
   uint32_t mVecWait = 0;
   uint32_t mBufferSize = 512;
   uint32_t mBufIndex = 0; // index for signal vector, loops from 0 to mSigVS
+  uint32_t mOpenedInputChans = 0;
+  uint32_t mOpenedOutputChans = 0;
   bool mExiting = false;
   bool mAudioEnding = false;
   bool mAudioDone = false;

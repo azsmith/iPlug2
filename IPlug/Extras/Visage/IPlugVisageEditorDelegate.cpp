@@ -44,8 +44,7 @@ VisageEditorDelegate::~VisageEditorDelegate()
 void* VisageEditorDelegate::OpenWindow(void* pParent)
 {
   mEditor = std::make_unique<visage::ApplicationEditor>();
-  visage::IBounds bounds = visage::computeWindowBounds(GetEditorWidth(), GetEditorHeight());
-  mEditor->setBounds(0, 0, bounds.width(), bounds.height());
+  mEditor->setBounds(0, 0, GetEditorWidth(), GetEditorHeight());
 
   mEditor->onDraw() = [this](visage::Canvas& canvas) {
     OnDraw(canvas);
@@ -92,8 +91,30 @@ void VisageEditorDelegate::OnParentWindowResize(int width, int height)
 {
   if (mWindow && mEditor)
   {
-    mWindow->setWindowSize(width, height);
-    mEditor->setBounds(0, 0, width, height);
+    int logical_width = width;
+    int logical_height = height;
+    float scale = mWindow->dpiScale();
+
+    if (scale > 1.01f)
+    {
+      int current_native_width = mWindow->clientWidth();
+      int current_native_height = mWindow->clientHeight();
+      int current_logical_width = std::round(current_native_width / scale);
+      int current_logical_height = std::round(current_native_height / scale);
+
+      bool width_is_native = std::abs(width - current_native_width) <= 2 ||
+                             width > current_logical_width * 3 / 2;
+      bool height_is_native = std::abs(height - current_native_height) <= 2 ||
+                              height > current_logical_height * 3 / 2;
+
+      if (width_is_native)
+        logical_width = std::round(width / scale);
+      if (height_is_native)
+        logical_height = std::round(height / scale);
+    }
+
+    mWindow->setWindowSize(logical_width, logical_height);
+    mEditor->setBounds(0, 0, logical_width, logical_height);
   }
 }
 

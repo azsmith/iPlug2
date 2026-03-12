@@ -575,18 +575,20 @@ bool IPlugAPPHost::InitAudio(uint32_t inID, uint32_t outID, uint32_t sr, uint32_
   CloseAudio();
 
   RtAudio::StreamParameters iParams, oParams;
+  const uint32_t requestedInputChans = GetPlug()->MaxNChannels(ERoute::kInput);
+  const uint32_t requestedOutputChans = GetPlug()->MaxNChannels(ERoute::kOutput);
+
   iParams.deviceId = inID;
-  iParams.nChannels = GetPlug()->MaxNChannels(ERoute::kInput); // TODO: flexible channel count
   iParams.firstChannel = 0; // TODO: flexible channel count
 
   oParams.deviceId = outID;
-  oParams.nChannels = GetPlug()->MaxNChannels(ERoute::kOutput); // TODO: flexible channel count
+  oParams.nChannels = requestedOutputChans; // TODO: flexible channel count
   oParams.firstChannel = 0; // TODO: flexible channel count
 
   mBufferSize = iovs; // mBufferSize may get changed by stream
 
   DBGMSG("trying to start audio stream @ %i sr, buffer size %i\nindev = %s\noutdev = %s\ninputs = %i\noutputs = %i\n",
-    sr, mBufferSize, GetAudioDeviceName(inID).c_str(), GetAudioDeviceName(outID).c_str(), iParams.nChannels, oParams.nChannels);
+    sr, mBufferSize, GetAudioDeviceName(inID).c_str(), GetAudioDeviceName(outID).c_str(), requestedInputChans, oParams.nChannels);
 
   RtAudio::StreamOptions options;
   options.flags = RTAUDIO_NONINTERLEAVED;
@@ -598,12 +600,28 @@ bool IPlugAPPHost::InitAudio(uint32_t inID, uint32_t outID, uint32_t sr, uint32_
   mVecWait = 0;
   mAudioEnding = false;
   mAudioDone = false;
+  mOpenedInputChans = 0;
+  mOpenedOutputChans = 0;
   
   mIPlug->SetBlockSize(APP_SIGNAL_VECTOR_SIZE);
   mIPlug->SetSampleRate(mSampleRate);
   mIPlug->OnReset();
 
-  auto status = mDAC->openStream(&oParams, iParams.nChannels > 0 ? &iParams : nullptr, RTAUDIO_FLOAT64, sr, &mBufferSize, &AudioCallback, this, &options);
+  auto tryOpenStream = [&](uint32_t inputChans) {
+    iParams.nChannels = inputChans;
+    return mDAC->openStream(&oParams, inputChans > 0 ? &iParams : nullptr,
+                            RTAUDIO_FLOAT64, sr, &mBufferSize, &AudioCallback, this, &options);
+  };
+
+  auto status = tryOpenStream(requestedInputChans);
+
+  if (status != RtAudioErrorType::RTAUDIO_NO_ERROR && requestedInputChans > 0)
+  {
+    DBGMSG("Retrying audio stream with no input channels after failure: %s\n", mDAC->getErrorText().c_str());
+    if (mDAC->isStreamOpen())
+      mDAC->closeStream();
+    status = tryOpenStream(0);
+  }
 
   if (status != RtAudioErrorType::RTAUDIO_NO_ERROR)
   {
@@ -611,12 +629,15 @@ bool IPlugAPPHost::InitAudio(uint32_t inID, uint32_t outID, uint32_t sr, uint32_
     return false;
   }
 
-  for (int i = 0; i < iParams.nChannels; i++)
+  mOpenedInputChans = iParams.nChannels;
+  mOpenedOutputChans = oParams.nChannels;
+
+  for (uint32_t i = 0; i < mOpenedInputChans; i++)
   {
     mInputBufPtrs.Add(nullptr); //will be set in callback
   }
     
-  for (int i = 0; i < oParams.nChannels; i++)
+  for (uint32_t i = 0; i < mOpenedOutputChans; i++)
   {
     mOutputBufPtrs.Add(nullptr); //will be set in callback
   }
@@ -686,8 +707,8 @@ int IPlugAPPHost::AudioCallback(void* pOutputBuffer, void* pInputBuffer, uint32_
 {
   IPlugAPPHost* _this = (IPlugAPPHost*) pUserData;
 
-  int nins = _this->GetPlug()->MaxNChannels(ERoute::kInput);
-  int nouts = _this->GetPlug()->MaxNChannels(ERoute::kOutput);
+  int nins = static_cast<int>(_this->mOpenedInputChans);
+  int nouts = static_cast<int>(_this->mOpenedOutputChans);
   
   double* pInputBufferD = static_cast<double*>(pInputBuffer);
   double* pOutputBufferD = static_cast<double*>(pOutputBuffer);
@@ -782,4 +803,3 @@ void IPlugAPPHost::ErrorCallback(RtAudioErrorType type, const std::string &error
 {
   std::cerr << "\nerrorCallback: " << errorText << "\n\n";
 }
-
