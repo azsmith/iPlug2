@@ -27,7 +27,7 @@ function(iplug_configure_auv3iosappex target project_name)
     MACOSX_BUNDLE TRUE
     MACOSX_BUNDLE_INFO_PLIST ${PLUG_RESOURCES_DIR}/${project_name}-iOS-AUv3-Info.plist
     RUNTIME_OUTPUT_DIRECTORY "${APPEX_OUTPUT_DIR}"
-    OUTPUT_NAME "${project_name}AppExtension"
+    OUTPUT_NAME "${project_name}AUv3"
     # iOS-specific Xcode attributes
     XCODE_ATTRIBUTE_WRAPPER_EXTENSION "appex"
     XCODE_PRODUCT_TYPE "com.apple.product-type.app-extension"
@@ -69,22 +69,12 @@ function(iplug_configure_auv3iosappex target project_name)
 
   if(XCODE)
     # For Xcode: XCODE_ATTRIBUTE_WRAPPER_EXTENSION creates .appex bundle directly
-    # Bundle is created as ${project_name}AppExtension.appex, we rename to ${project_name}AUv3.appex
-    set(APPEX_BUNDLE "${CMAKE_BINARY_DIR}/out/$<CONFIG>/${project_name}AppExtension.appex")
-    set(APPEX_FINAL "${CMAKE_BINARY_DIR}/out/$<CONFIG>/${project_name}AUv3.appex")
     add_custom_command(TARGET ${target} POST_BUILD
-      # Create PkgInfo
-      COMMAND ${CMAKE_COMMAND} -DPKGINFO_PATH="${APPEX_BUNDLE}/PkgInfo"
+      COMMAND ${CMAKE_COMMAND} -DPKGINFO_PATH="$<TARGET_BUNDLE_DIR:${target}>/PkgInfo"
         -P "${PKGINFO_SCRIPT}"
-      # Rename bundle to final name with AUv3 suffix
-      COMMAND ${CMAKE_COMMAND} -E rm -rf "${APPEX_FINAL}"
-      COMMAND ${CMAKE_COMMAND} -E rename
-        "${APPEX_BUNDLE}"
-        "${APPEX_FINAL}"
-      # Copy Info.plist from source (Xcode may regenerate original bundle after rename)
       COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${PLUG_RESOURCES_DIR}/${project_name}-iOS-AUv3-Info.plist"
-        "${APPEX_FINAL}/Info.plist"
+        "$<TARGET_BUNDLE_DIR:${target}>/Info.plist"
       COMMENT "Building ${project_name}AUv3.appex (iOS)"
     )
   else()
@@ -97,9 +87,9 @@ function(iplug_configure_auv3iosappex target project_name)
       COMMAND ${CMAKE_COMMAND} -E copy
         "${PLUG_RESOURCES_DIR}/${project_name}-iOS-AUv3-Info.plist"
         "$<TARGET_BUNDLE_DIR:${target}>/Info.plist"
-      # Move and rename .app bundle to .appex in final location
+      # Move .app bundle to .appex in final location
       COMMAND ${CMAKE_COMMAND} -E rm -rf "${CMAKE_BINARY_DIR}/out/${project_name}AUv3.appex"
-      COMMAND ${CMAKE_COMMAND} -E rename
+      COMMAND ${CMAKE_COMMAND} -E copy_directory
         "$<TARGET_BUNDLE_DIR:${target}>"
         "${CMAKE_BINARY_DIR}/out/${project_name}AUv3.appex"
       COMMENT "Building ${project_name}AUv3.appex (iOS)"
