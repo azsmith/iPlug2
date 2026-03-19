@@ -10,19 +10,25 @@
 
 #import "IPlugAUPlayer.h"
 #include "IPlugConstants.h"
+#include "IPlugProcessor.h"
 #include "config.h"
 
 #if !__has_feature(objc_arc)
 #error This file must be compiled with Arc. Use -fobjc-arc flag
 #endif
 
-bool isInstrument()
+bool wantsAudioInput()
 {
-#if PLUG_TYPE == 1
-  return YES;
-#else
-  return NO;
-#endif
+  WDL_PtrList<iplug::IOConfig> channelIO;
+  int totalNInChans = 0;
+  int totalNOutChans = 0;
+  int totalNInBuses = 0;
+  int totalNOutBuses = 0;
+  iplug::IPlugProcessor::ParseChannelIOStr(PLUG_CHANNEL_IO, channelIO,
+                                           totalNInChans, totalNOutChans,
+                                           totalNInBuses, totalNOutBuses);
+  channelIO.Empty(true);
+  return totalNInChans > 0;
 }
 
 @implementation IPlugAUPlayer
@@ -117,8 +123,8 @@ bool isInstrument()
   NSError* error = nil;
 
   AVAudioSessionCategoryOptions options = AVAudioSessionCategoryOptionDefaultToSpeaker | AVAudioSessionCategoryOptionAllowBluetooth;
-  [session setCategory: isInstrument() ? AVAudioSessionCategoryPlayback
-                                       : AVAudioSessionCategoryPlayAndRecord
+  [session setCategory: wantsAudioInput() ? AVAudioSessionCategoryPlayAndRecord
+                                         : AVAudioSessionCategoryPlayback
                   withOptions:options error: &error];
   
   if (error)
@@ -143,7 +149,7 @@ bool isInstrument()
 
 - (void) makeEngineConnections
 {
-  if (!isInstrument())
+  if (wantsAudioInput())
   {
     AVAudioNode* inputNode = [engine inputNode];
     AVAudioFormat* inputNodeFormat = [inputNode inputFormatForBus:0];
@@ -179,7 +185,7 @@ bool isInstrument()
 
 - (void) printEngineInfo
 {
-  if (!isInstrument())
+  if (wantsAudioInput())
   {
     AVAudioFormat* inputNodeFormat = [[engine inputNode] inputFormatForBus:0];
     AVAudioFormat* pluginInputFormat = [avAudioUnit inputFormatForBus:0];
@@ -203,9 +209,9 @@ bool isInstrument()
   AVAudioSession* session = [AVAudioSession sharedInstance];
   NSLog(@"Session SR: %i", int(session.sampleRate));
   NSLog(@"Session IO Buffer: %i", int((session.IOBufferDuration * session.sampleRate)+0.5));
-  if (!isInstrument()) NSLog(@"Session Input Chans: %i", int(session.inputNumberOfChannels));
+  if (wantsAudioInput()) NSLog(@"Session Input Chans: %i", int(session.inputNumberOfChannels));
   NSLog(@"Session Output Chans: %i", int(session.outputNumberOfChannels));
-  if (!isInstrument()) NSLog(@"Session Input Latency: %f ms", session.inputLatency * 1000.0f);
+  if (wantsAudioInput()) NSLog(@"Session Input Latency: %f ms", session.inputLatency * 1000.0f);
   NSLog(@"Session Output Latency: %f ms", session.outputLatency * 1000.0f);
   AVAudioSessionRouteDescription *currentRoute = [session currentRoute];
   for (AVAudioSessionPortDescription* input in currentRoute.inputs)
