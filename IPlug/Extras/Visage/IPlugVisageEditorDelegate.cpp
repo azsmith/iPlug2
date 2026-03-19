@@ -72,7 +72,10 @@ void* VisageEditorDelegate::OpenWindow(void* pParent)
 
   mWindow = visage::createPluginWindow(mEditor->width(), mEditor->height(), pParent);
   mEditor->addToWindow(mWindow.get());
-  mWindow->show();
+  if (pParent)
+    mWindow->show();
+  else
+    mWindow->handleWindowShown(); // AU host embeds the view; skip standalone window creation but start rendering
 
   OnUIOpen();
   return mWindow->nativeHandle();
