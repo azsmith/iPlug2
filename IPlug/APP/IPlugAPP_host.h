@@ -233,6 +233,7 @@ private:
   uint32_t mBufIndex = 0; // index for signal vector, loops from 0 to mSigVS
   uint32_t mOpenedInputChans = 0;
   uint32_t mOpenedOutputChans = 0;
+  std::vector<double> mSilenceBuf; // silence for missing input channels
   bool mExiting = false;
   bool mAudioEnding = false;
   bool mAudioDone = false;
