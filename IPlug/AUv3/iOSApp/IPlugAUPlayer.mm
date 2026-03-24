@@ -244,7 +244,7 @@ bool wantsAudioInput()
   NSInteger reason = [notification.userInfo[AVAudioSessionRouteChangeReasonKey] integerValue];
 
   if (reason == AVAudioSessionRouteChangeReasonNewDeviceAvailable ||
-      reason == AVAudioSessionRouteChangeReasonOldDeviceRemoved)
+      reason == AVAudioSessionRouteChangeReasonOldDeviceUnavailable)
   {
     [engine stop];
     [engine disconnectNodeOutput:avAudioUnit];
