@@ -58,9 +58,12 @@
 - (void) viewWillAppear:(BOOL) animated
 {
   [super viewWillAppear:animated];
-  
+
   if (self.audioUnit)
   {
+    int width = (int) [(IPLUG_AUAUDIOUNIT*) self.audioUnit width];
+    int height = (int) [(IPLUG_AUAUDIOUNIT*) self.audioUnit height];
+    self.preferredContentSize = CGSizeMake(width, height);
     [(IPLUG_AUAUDIOUNIT*) self.audioUnit openWindow:self.view];
   }
 }
