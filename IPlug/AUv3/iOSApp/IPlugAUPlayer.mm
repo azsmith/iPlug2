@@ -122,7 +122,7 @@ bool wantsAudioInput()
   AVAudioSession* session = [AVAudioSession sharedInstance];
   NSError* error = nil;
 
-  AVAudioSessionCategoryOptions options = AVAudioSessionCategoryOptionDefaultToSpeaker | AVAudioSessionCategoryOptionAllowBluetooth;
+  AVAudioSessionCategoryOptions options = AVAudioSessionCategoryOptionDefaultToSpeaker | AVAudioSessionCategoryOptionAllowBluetooth | AVAudioSessionCategoryOptionAllowBluetoothA2DP;
   [session setCategory: wantsAudioInput() ? AVAudioSessionCategoryPlayAndRecord
                                          : AVAudioSessionCategoryPlayback
                   withOptions:options error: &error];
@@ -230,12 +230,36 @@ bool wantsAudioInput()
   NSNotificationCenter* notifCtr = [NSNotificationCenter defaultCenter];
 
   [notifCtr addObserver: self selector: @selector (onEngineConfigurationChange:) name:AVAudioEngineConfigurationChangeNotification object: engine];
+  [notifCtr addObserver: self selector: @selector (onRouteChange:) name:AVAudioSessionRouteChangeNotification object: [AVAudioSession sharedInstance]];
 }
 
 #pragma mark Notifications
 - (void) onEngineConfigurationChange: (NSNotification*) notification
 {
   [self restartAudioEngine];
+}
+
+- (void) onRouteChange: (NSNotification*) notification
+{
+  NSInteger reason = [notification.userInfo[AVAudioSessionRouteChangeReasonKey] integerValue];
+
+  if (reason == AVAudioSessionRouteChangeReasonNewDeviceAvailable ||
+      reason == AVAudioSessionRouteChangeReasonOldDeviceRemoved)
+  {
+    [engine stop];
+    [engine disconnectNodeOutput:avAudioUnit];
+    [self makeEngineConnections];
+
+    NSError* error = nil;
+    if (![engine startAndReturnError:&error])
+    {
+      NSLog(@"Error restarting engine after route change: %@", error);
+    }
+
+#ifdef _DEBUG
+    [self printSessionInfo];
+#endif
+  }
 }
 
 @end
