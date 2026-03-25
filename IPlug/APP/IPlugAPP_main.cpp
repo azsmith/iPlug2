@@ -442,7 +442,9 @@ INT_PTR SWELLAppMain(int msg, INT_PTR parm1, INT_PTR parm2)
         DeleteMenu(menu, 1, MF_BYPOSITION); // delete file menu
       }
       // Always set up screenshot shortcut
+#ifdef ID_SCREENSHOT
       SetMenuItemModifier(menu, ID_SCREENSHOT, MF_BYCOMMAND, 'S', FCONTROL | FSHIFT);
+#endif
 
 #if !defined _DEBUG || defined NO_IGRAPHICS
       if (menu)
