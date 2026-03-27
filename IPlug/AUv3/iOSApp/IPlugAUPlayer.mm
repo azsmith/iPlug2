@@ -88,9 +88,14 @@ bool wantsAudioInput()
     NSLog(@"Error setting session active: %@", [error localizedDescription]);
   }
   
-  if (![engine startAndReturnError: &error])
-  {
-    NSLog(@"engine failed to start: %@", error);
+  @try {
+    if (![engine startAndReturnError: &error])
+    {
+      NSLog(@"engine failed to start: %@", error);
+    }
+  }
+  @catch (NSException *exception) {
+    NSLog(@"NSException starting audio engine: %@, Reason: %@", exception.name, exception.reason);
   }
 
   completionBlock();
@@ -153,14 +158,25 @@ bool wantsAudioInput()
   {
     AVAudioNode* inputNode = [engine inputNode];
     AVAudioFormat* inputNodeFormat = [inputNode inputFormatForBus:0];
-    
-    @autoreleasepool {
-      @try {
-        [engine connect:inputNode to:avAudioUnit format: inputNodeFormat];
+
+    // Check for valid input format before connecting (avoids crash on devices
+    // where microphone permission hasn't been granted or input is unavailable)
+    if (inputNodeFormat.sampleRate > 0 && inputNodeFormat.channelCount > 0)
+    {
+      @autoreleasepool {
+        @try {
+          [engine connect:inputNode to:avAudioUnit format: inputNodeFormat];
+        }
+        @catch (NSException *exception) {
+          NSLog(@"NSException when trying to connect input node: %@, Reason: %@", exception.name, exception.reason);
+          [engine disconnectNodeInput:avAudioUnit];
+        }
       }
-      @catch (NSException *exception) {
-        NSLog(@"NSException when trying to connect input node: %@, Reason: %@", exception.name, exception.reason);
-      }
+    }
+    else
+    {
+      NSLog(@"Skipping input node connection: invalid format (SR: %g, chans: %u)",
+            inputNodeFormat.sampleRate, (unsigned)inputNodeFormat.channelCount);
     }
   }
   
