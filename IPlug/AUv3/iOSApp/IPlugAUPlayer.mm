@@ -64,30 +64,51 @@ bool wantsAudioInput()
 {
   if (audioUnit == nil)
     return;
-  
+
   avAudioUnit = audioUnit;
-  
+
   [engine attachNode:avAudioUnit];
 
   self.currentAudioUnit = avAudioUnit.AUAudioUnit;
-  
+
   [self setupSession];
-    
+
+  if (wantsAudioInput())
+  {
+    [AVAudioApplication requestRecordPermissionWithCompletionHandler:^(BOOL granted) {
+      dispatch_async(dispatch_get_main_queue(), ^{
+        if (!granted)
+          NSLog(@"Microphone permission denied");
+
+        [self startEngineAndComplete:completionBlock];
+      });
+    }];
+  }
+  else
+  {
+    [self startEngineAndComplete:completionBlock];
+  }
+}
+
+- (void) startEngineAndComplete:(void (^) (void))completionBlock
+{
+  NSError* error = nil;
+
 #ifdef _DEBUG
   [self printEngineInfo];
   [self printSessionInfo];
 #endif
-  
+
   [self makeEngineConnections];
   [self addNotifications];
-  
+
   AVAudioSession* session = [AVAudioSession sharedInstance];
 
   if (![session setActive:TRUE error: &error])
   {
     NSLog(@"Error setting session active: %@", [error localizedDescription]);
   }
-  
+
   @try {
     if (![engine startAndReturnError: &error])
     {
