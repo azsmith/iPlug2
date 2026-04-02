@@ -170,3 +170,13 @@ void IPlugAPP::AppProcess(double** inputs, double** outputs, int nFrames)
   ProcessBuffers(0.0, GetBlockSize());
   LEAVE_PARAMS_MUTEX
 }
+
+long IPlugAPP::GetOutputLatencyFrames() const
+{
+  return mAppHost ? mAppHost->GetOutputLatencyFrames() : 0;
+}
+
+double IPlugAPP::GetOutputLatencySeconds() const
+{
+  return mAppHost ? mAppHost->GetOutputLatencySeconds() : 0.0;
+}

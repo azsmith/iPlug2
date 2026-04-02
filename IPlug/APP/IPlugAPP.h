@@ -54,6 +54,8 @@ public:
   
   //IPlugAPP
   void AppProcess(double** inputs, double** outputs, int nFrames);
+  long GetOutputLatencyFrames() const;
+  double GetOutputLatencySeconds() const;
 
 private:
   IPlugAPPHost* mAppHost = nullptr;

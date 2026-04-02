@@ -199,6 +199,25 @@ void IPlugAPPHost::UpdateINI()
   WritePrivateProfileString("midi", "outchan", buf, ini);
 }
 
+long IPlugAPPHost::GetOutputLatencyFrames() const
+{
+  if (!mDAC || !mDAC->isStreamOpen())
+    return static_cast<long>(mBufferSize);
+
+  const long reportedLatency = mDAC->getStreamLatency();
+  if (reportedLatency > 0)
+    return reportedLatency;
+
+  return static_cast<long>(mBufferSize);
+}
+
+double IPlugAPPHost::GetOutputLatencySeconds() const
+{
+  return mSampleRate > 0.0
+    ? static_cast<double>(GetOutputLatencyFrames()) / mSampleRate
+    : 0.0;
+}
+
 std::string IPlugAPPHost::GetAudioDeviceName(uint32_t deviceID) const
 {
   auto str = mDAC->getDeviceInfo(deviceID).name;
@@ -370,6 +389,62 @@ bool IPlugAPPHost::MIDISettingsInStateAreEqual(AppState& os, AppState& ns)
   return true;
 }
 
+uint32_t IPlugAPPHost::ResolveSystemSampleRate(uint32_t inputDeviceId, uint32_t outputDeviceId)
+{
+  if (!mDAC)
+    return mState.mAudioSR > 0 ? mState.mAudioSR : 44100;
+
+  const auto inputInfo = mDAC->getDeviceInfo(inputDeviceId);
+  const auto outputInfo = mDAC->getDeviceInfo(outputDeviceId);
+  const bool needsInputRateMatch = GetPlug()->MaxNChannels(ERoute::kInput) > 0 && inputInfo.inputChannels > 0;
+
+  auto supportsRate = [](const RtAudio::DeviceInfo& info, uint32_t rate) {
+    for (auto supportedRate : info.sampleRates)
+    {
+      if (supportedRate == rate)
+        return true;
+    }
+
+    return false;
+  };
+
+  auto supportsSharedRate = [&](uint32_t rate) {
+    if (rate == 0)
+      return false;
+
+    if (!supportsRate(outputInfo, rate))
+      return false;
+
+    if (needsInputRateMatch && !supportsRate(inputInfo, rate))
+      return false;
+
+    return true;
+  };
+
+  const uint32_t candidates[] = {
+    outputInfo.preferredSampleRate,
+    inputInfo.preferredSampleRate,
+    mState.mAudioSR
+  };
+
+  for (auto rate : candidates)
+  {
+    if (supportsSharedRate(rate))
+      return rate;
+  }
+
+  for (auto rate : outputInfo.sampleRates)
+  {
+    if (supportsSharedRate(rate))
+      return rate;
+  }
+
+  if (outputInfo.preferredSampleRate > 0)
+    return outputInfo.preferredSampleRate;
+
+  return mState.mAudioSR > 0 ? mState.mAudioSR : 44100;
+}
+
 bool IPlugAPPHost::TryToChangeAudioDriverType()
 {
   CloseAudio();
@@ -456,7 +531,15 @@ bool IPlugAPPHost::TryToChangeAudio()
 
   if (inputID && outputID)
   {
-    return InitAudio(inputID.value(), outputID.value(), mState.mAudioSR, mState.mBufferSize);
+    const auto systemSampleRate = ResolveSystemSampleRate(inputID.value(), outputID.value());
+
+    if (mState.mAudioSR != systemSampleRate)
+    {
+      mState.mAudioSR = systemSampleRate;
+      UpdateINI();
+    }
+
+    return InitAudio(inputID.value(), outputID.value(), systemSampleRate, mState.mBufferSize);
   }
 
   return false;

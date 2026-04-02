@@ -125,6 +125,8 @@ void IPlugAPPHost::PopulateDriverSpecificControls(HWND hwndDlg)
   }
 #endif
 
+  EnableWindow(GetDlgItem(hwndDlg, IDC_COMBO_AUDIO_SR), FALSE);
+
   int indevidx = 0;
   int outdevidx = 0;
 
@@ -170,6 +172,9 @@ void IPlugAPPHost::PopulateDriverSpecificControls(HWND hwndDlg)
     outputDevInfo = mDAC->getDeviceInfo(mAudioOutputDevIDs[outdevidx]);
     PopulateAudioOutputList(hwndDlg, &outputDevInfo);
   }
+
+  if (mAudioInputDevIDs.size() && mAudioOutputDevIDs.size())
+    mState.mAudioSR = ResolveSystemSampleRate(mAudioInputDevIDs[indevidx], mAudioOutputDevIDs[outdevidx]);
 
   PopulateSampleRateList(hwndDlg, &inputDevInfo, &outputDevInfo);
 }

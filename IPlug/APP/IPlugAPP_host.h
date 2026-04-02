@@ -176,6 +176,8 @@ public:
   bool Init();
   bool InitState();
   void UpdateINI();
+  long GetOutputLatencyFrames() const;
+  double GetOutputLatencySeconds() const;
   
   /** Returns the name of the audio device with a given RTAudio device ID
    * @param deviceID The ID RTAudio has given the audio device
@@ -199,6 +201,7 @@ public:
   bool InitAudio(uint32_t inId, uint32_t outId, uint32_t sr, uint32_t iovs);
   bool AudioSettingsInStateAreEqual(AppState& os, AppState& ns);
   bool MIDISettingsInStateAreEqual(AppState& os, AppState& ns);
+  uint32_t ResolveSystemSampleRate(uint32_t inputDeviceId, uint32_t outputDeviceId);
 
   bool TryToChangeAudioDriverType();
   bool TryToChangeAudio();
