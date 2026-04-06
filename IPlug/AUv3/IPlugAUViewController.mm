@@ -121,13 +121,19 @@
 
 - (void) viewDidDisappear
 {
-  // Deactivate constraints before closing to prevent conflicts on next viewWillAppear
-  if (mWidthConstraint && mHeightConstraint)
+  // Deactivate constraints before closing to prevent conflicts on next viewWillAppear.
+  // Only deactivate if the view is still in a window — during host-initiated resize
+  // teardown, the view may already be detached and constraint removal would throw.
+  if (mWidthConstraint && mHeightConstraint && self.view.window)
   {
-    [NSLayoutConstraint deactivateConstraints:@[mWidthConstraint, mHeightConstraint]];
-    mWidthConstraint = nil;
-    mHeightConstraint = nil;
+    @try {
+      [NSLayoutConstraint deactivateConstraints:@[mWidthConstraint, mHeightConstraint]];
+    } @catch (NSException* e) {
+      NSLog(@"[IPlugAUViewController] constraint deactivation exception: %@", e);
+    }
   }
+  mWidthConstraint = nil;
+  mHeightConstraint = nil;
   mPlugView = nil;
 
   [(IPLUG_AUAUDIOUNIT*) self.audioUnit closeWindow];
