@@ -114,6 +114,9 @@ AAX_Result GetEffectDescriptions(AAX_ICollection* pC)
   else if(strcmp(AAX_PLUG_CATEGORY_STR, "Dither") == (0)) category = AAX_ePlugInCategory_Dither;
   else if(strcmp(AAX_PLUG_CATEGORY_STR, "SoundField") == (0)) category = AAX_ePlugInCategory_SoundField;
   else if(strcmp(AAX_PLUG_CATEGORY_STR, "Effect") == (0)) category = AAX_ePlugInCategory_Effect;
+  // Allow PLUG_TYPE=0 plugins (e.g. aumf MIDI-controlled effects) to still
+  // list under "Instrument" in Pro Tools by using the string mapping.
+  else if(strcmp(AAX_PLUG_CATEGORY_STR, "Instrument") == (0)) category = AAX_ePlugInCategory_SWGenerators;
   err |= pDesc->AddCategory(category);
   
   //err |= effectDescriptor->AddResourceInfo(AAX_eResourceType_PageTable, PLUG_NAME ".xml");
