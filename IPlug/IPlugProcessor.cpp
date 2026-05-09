@@ -72,19 +72,31 @@ void IPlugProcessor::ProcessBlock(sample** inputs, sample** outputs, int nFrames
   const int nIn = mChannelData[ERoute::kInput].GetSize();
   const int nOut = mChannelData[ERoute::kOutput].GetSize();
 
+  // Bypass semantics differ by plug-in type. Effects pass audio through;
+  // instruments have no input audio, so the AAX bypass path landing here
+  // (via PassThroughBuffers) used to memcpy from the input scratch list,
+  // which holds uninitialised pointers because the host never attaches
+  // input buffers — that crashed Pro Tools when the user toggled bypass.
+  // For instruments, just emit silence on every output.
+  const bool copyInputs = !IsInstrument();
+
   int j = 0;
-  for (int i = 0; i < nOut; ++i)
+  if (copyInputs)
   {
-    if (i < nIn)
+    for (int i = 0; i < nOut; ++i)
     {
-      memcpy(outputs[i], inputs[i], nFrames * sizeof(sample));
-      j++;
+      if (i < nIn && inputs && inputs[i] && outputs && outputs[i])
+      {
+        memcpy(outputs[i], inputs[i], nFrames * sizeof(sample));
+        j++;
+      }
     }
   }
   // zero remaining outs
   for (/* same j */; j < nOut; ++j)
   {
-    memset(outputs[j], 0, nFrames * sizeof(sample));
+    if (outputs && outputs[j])
+      memset(outputs[j], 0, nFrames * sizeof(sample));
   }
 }
 
