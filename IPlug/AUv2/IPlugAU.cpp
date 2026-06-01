@@ -19,6 +19,12 @@
 
 using namespace iplug;
 
+// Defined in IPlugAU_view_factory.mm. Resolves the Cocoa view factory class'
+// bundle URL by its loaded image, as a fallback for kAudioUnitProperty_CocoaUI
+// when CFBundleGetBundleWithIdentifier() returns NULL. Returns a +1 retained
+// CFURLRef (caller releases) or NULL.
+extern "C" CFURLRef IPlugAUCocoaViewBundleURL(void);
+
 #pragma mark - CFString and CString Utilities
 
 static inline CFStringRef MakeCFString(const char* cStr)
@@ -917,7 +923,14 @@ OSStatus IPlugAU::GetProperty(AudioUnitPropertyID propID, AudioUnitScope scope, 
           AudioUnitCocoaViewInfo* pViewInfo = (AudioUnitCocoaViewInfo*) pData;
           CFStrLocal bundleID(mBundleID.Get());
           CFBundleRef pBundle = CFBundleGetBundleWithIdentifier(bundleID.Get());
-          CFURLRef url = CFBundleCopyBundleURL(pBundle);
+          // CFBundleGetBundleWithIdentifier() only returns bundles CoreFoundation
+          // has already instantiated, NOT every dlopen'd component. During
+          // out-of-process AU validation (auval/Logic) it can return NULL, and
+          // CFBundleCopyBundleURL(NULL) would deref a null pointer and crash the
+          // scan. Fall back to resolving the bundle by the view class' own loaded
+          // image so the host can still locate the Cocoa view. See
+          // IPlugAUCocoaViewBundleURL() in IPlugAU_view_factory.mm.
+          CFURLRef url = pBundle ? CFBundleCopyBundleURL(pBundle) : IPlugAUCocoaViewBundleURL();
           pViewInfo->mCocoaAUViewBundleLocation = url;
           pViewInfo->mCocoaAUViewClass[0] = CFStringCreateWithCString(0, mCocoaViewFactoryClassName.Get(), kCFStringEncodingUTF8);
         }
