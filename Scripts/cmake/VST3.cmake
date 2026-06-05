@@ -123,9 +123,12 @@ if(NOT TARGET iPlug2::VST3)
       "-framework Cocoa"
     )
   elseif(UNIX AND NOT APPLE)
-    # Linux module entry (ModuleEntry/ModuleExit) so the .so exports the factory
+    # Linux module entry (ModuleEntry/ModuleExit) + timer.cpp, which defines
+    # Steinberg::InjectCreateTimerFunction (referenced by the base; provided by the
+    # platform main on mac/win, but unresolved in the Linux .so without it).
     target_sources(iPlug2::VST3 INTERFACE
       ${VST3_SDK_DIR}/public.sdk/source/main/linuxmain.cpp
+      ${VST3_SDK_DIR}/base/source/timer.cpp
     )
   endif()
 
