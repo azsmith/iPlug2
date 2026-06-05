@@ -123,8 +123,10 @@ if(NOT TARGET iPlug2::VST3)
       "-framework Cocoa"
     )
   elseif(UNIX AND NOT APPLE)
-    # Linux support - to be added later
-    message(WARNING "VST3 Linux support not yet implemented")
+    # Linux module entry (ModuleEntry/ModuleExit) so the .so exports the factory
+    target_sources(iPlug2::VST3 INTERFACE
+      ${VST3_SDK_DIR}/public.sdk/source/main/linuxmain.cpp
+    )
   endif()
 
   target_link_libraries(iPlug2::VST3 INTERFACE iPlug2::IPlug)
@@ -190,5 +192,18 @@ function(iplug_configure_vst3 target project_name)
         COMMENT "Creating PkgInfo for ${project_name}.vst3"
       )
     endif()
+  elseif(UNIX AND NOT APPLE)
+    # Linux VST3 bundle: <name>.vst3/Contents/<arch>-linux/<name>.so
+    if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
+      set(VST3_ARCH "aarch64-linux")
+    else()
+      set(VST3_ARCH "x86_64-linux")
+    endif()
+    set(VST3_OUTPUT_DIR "${CMAKE_BINARY_DIR}/out/${project_name}.vst3/Contents/${VST3_ARCH}")
+    set_target_properties(${target} PROPERTIES
+      PREFIX ""
+      OUTPUT_NAME "${project_name}"
+      SUFFIX ".so"
+      LIBRARY_OUTPUT_DIRECTORY "${VST3_OUTPUT_DIR}")
   endif()
 endfunction()
