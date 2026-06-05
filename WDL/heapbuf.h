@@ -36,6 +36,7 @@
 #ifndef WDL_HEAPBUF_IMPL_ONLY
 
 #include "wdltypes.h"
+#include <cstdlib> // malloc/free/realloc (libstdc++ needs explicit include)
 
 class WDL_HeapBuf
 {
