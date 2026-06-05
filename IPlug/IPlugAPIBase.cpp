@@ -141,6 +141,11 @@ void IPlugAPIBase::SendParameterValueFromAPI(int paramIdx, double value, bool no
 
 void IPlugAPIBase::OnTimer(Timer& t)
 {
+  OnIdleTimer();
+}
+
+void IPlugAPIBase::OnIdleTimer()
+{
 // VST3 ********************************************************************************
 #if defined VST3P_API || defined VST3_API
   while (mMidiMsgsFromProcessor.ElementsAvailable())

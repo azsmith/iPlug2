@@ -160,7 +160,13 @@ Timer_impl::Timer_impl(ITimerFunction func, uint32_t intervalMs)
     {
       std::this_thread::sleep_for(std::chrono::milliseconds(mIntervalMs));
       if (mRunning.load())
-        mTimerFunc(*this);
+      {
+        // STOPGAP: this timer fires on a worker thread, but OnIdle() and the code
+        // it drives assume the main thread. Until a proper main-thread timer
+        // (VST3 IRunLoop / CLAP timer-support) is wired, swallow exceptions so an
+        // off-main-thread throw (e.g. std::system_error) can't terminate the host.
+        try { mTimerFunc(*this); } catch (...) {}
+      }
     }
   });
 }

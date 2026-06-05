@@ -171,6 +171,11 @@ private:
   // clap_plugin_gui_cocoa/win32
   bool guiIsApiSupported(const char* api, bool isFloating) noexcept override;
   bool guiSetParent(const clap_window* pWindow) noexcept override;
+
+  // clap_plugin_timer_support — host-driven idle on the MAIN thread (Linux: avoids
+  // the thread-based Timer firing OnIdle off the main thread).
+  bool implementsTimerSupport() const noexcept override { return true; }
+  void onTimer(clap_id timerId) noexcept override;
   
   // Helper to attach GUI Windows
   bool GUIWindowAttach(void* parent) noexcept;
@@ -194,7 +199,8 @@ private:
   uint32_t NBuses(ERoute direction, int configIdx) const;
   uint32_t NChannels(ERoute direction, uint32_t bus, int configIdx) const;
   
-  IPlugQueue<ParamToHost> mParamValuesToHost {PARAM_TRANSFER_SIZE};
+  clap_id mIdleTimerID = CLAP_INVALID_ID;
+    IPlugQueue<ParamToHost> mParamValuesToHost {PARAM_TRANSFER_SIZE};
   IMidiQueueBase<SysExData> mSysExToHost;
   IMidiQueue mMidiToHost;
   WDL_TypedBuf<float *> mAudioIO32;
