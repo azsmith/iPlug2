@@ -213,6 +213,10 @@ private:
 
   void OnTimer(Timer& t);
 
+  /** Runs the idle work (processor->editor queues + OnIdle). Called by the internal
+   * Timer, or directly by host-driven timers (e.g. CLAP timer-support). */
+  void OnIdleTimer();
+
   friend class IPlugAPP;
   friend class IPlugAAX;
   friend class IPlugAU;

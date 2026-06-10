@@ -50,7 +50,18 @@ IPlugCLAP::IPlugCLAP(const InstanceInfo& info, const Config& config)
   mAudioIO64.Resize(nChans);
   
   SetHost(info.mHost->name, version);
-  CreateTimer();
+
+  // Prefer the host's timer-support extension so OnIdle() runs on the MAIN thread.
+  // The internal Timer is thread-based on Linux and would run OnIdle off the main
+  // thread (crashing main-thread-only work like project load). Fall back if absent.
+  if (!(_host.canUseTimerSupport() && _host.timerSupportRegister(IDLE_TIMER_RATE, &mIdleTimerID)))
+    CreateTimer();
+}
+
+void IPlugCLAP::onTimer(clap_id timerId) noexcept
+{
+  if (timerId == mIdleTimerID)
+    OnIdleTimer();
 }
 
 uint32_t IPlugCLAP::tailGet() const noexcept
