@@ -17,6 +17,10 @@
 
 #include "IPlugLogger.h"
 
+#include <atomic>
+#include <memory>
+#include <thread>
+
 using namespace iplug;
 
 #ifndef MAX_PATH_LEN
@@ -36,9 +40,9 @@ IPlugAPPHost::IPlugAPPHost()
 IPlugAPPHost::~IPlugAPPHost()
 {
   mExiting = true;
-  
+
   CloseAudio();
-  
+
   if (mMidiIn)
     mMidiIn->cancelCallback();
 
@@ -571,14 +575,52 @@ void IPlugAPPHost::CloseAudio()
     if (mDAC->isStreamRunning())
     {
       mAudioEnding = true;
-    
-      while (!mAudioDone)
+
+      // Wait for the audio callback to acknowledge the fade-out, but never
+      // block forever: mAudioDone is only set from inside the callback, so if
+      // the callback has stopped being serviced it never flips. Cap the wait.
+      int waitedMs = 0;
+      while (!mAudioDone && waitedMs < 1000)
+      {
         Sleep(10);
-      
-      mDAC->abortStream();
+        waitedMs += 10;
+      }
     }
-    
-    mDAC->closeStream();
+
+    // Tear the stream down on a worker thread guarded by a timeout. On a
+    // healthy device abortStream()/closeStream() return immediately and we
+    // join right away. But if the device has stopped being serviced (e.g. over
+    // Remote Desktop a stream opens yet is never clocked) these RtAudio calls
+    // block forever — and on the UI thread, inside WM_DESTROY, that hangs
+    // shutdown before PostQuitMessage and leaves a windowless zombie process.
+    // If teardown doesn't finish in time, abandon (leak) the RtAudio instance
+    // and carry on: the process is exiting so the OS reclaims it, and leaking
+    // keeps the detached worker's pointer valid until then.
+    RtAudio* pDAC = mDAC.get();
+    auto done = std::make_shared<std::atomic<bool>>(false);
+    std::thread worker([pDAC, done]() {
+      if (pDAC->isStreamRunning())
+        pDAC->abortStream();
+      pDAC->closeStream();
+      done->store(true, std::memory_order_release);
+    });
+
+    int waitedMs = 0;
+    while (!done->load(std::memory_order_acquire) && waitedMs < 2000)
+    {
+      Sleep(10);
+      waitedMs += 10;
+    }
+
+    if (done->load(std::memory_order_acquire))
+    {
+      worker.join();
+    }
+    else
+    {
+      worker.detach();
+      mDAC.release(); // leak the wedged RtAudio; OS reclaims at process exit
+    }
   }
 }
 
