@@ -78,4 +78,25 @@ static const AudioUnitPropertyID kIPlugObjectPropertyID = UINT32_MAX-100;
 
 @end
 
+// Returns a +1 retained CFURLRef (caller must CFRelease) for the bundle that
+// contains this AU's Cocoa view factory class, or NULL. Used as a fallback in
+// IPlugAU::GetProperty(kAudioUnitProperty_CocoaUI) when
+// CFBundleGetBundleWithIdentifier() returns NULL — which happens in
+// out-of-process validation/host contexts (auval, Logic) where CoreFoundation
+// has not instantiated a CFBundle for the dlopen'd component. Resolving by the
+// loaded class' own Mach-O image is the source of truth for "where is my UI",
+// so the host can still locate and load the view class.
+extern "C" CFURLRef IPlugAUCocoaViewBundleURL(void)
+{
+  NSBundle* bundle = [NSBundle bundleForClass:[AUV2_VIEW_CLASS class]];
+  NSURL* url = bundle ? [bundle bundleURL] : nil;
+  if (!url)
+    return NULL;
+#if __has_feature(objc_arc)
+  return (CFURLRef) CFBridgingRetain(url);
+#else
+  return (CFURLRef) [url retain];
+#endif
+}
+
 

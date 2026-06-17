@@ -17,6 +17,10 @@
 
 #include "IPlugLogger.h"
 
+#include <atomic>
+#include <memory>
+#include <thread>
+
 using namespace iplug;
 
 #ifndef MAX_PATH_LEN
@@ -36,9 +40,9 @@ IPlugAPPHost::IPlugAPPHost()
 IPlugAPPHost::~IPlugAPPHost()
 {
   mExiting = true;
-  
+
   CloseAudio();
-  
+
   if (mMidiIn)
     mMidiIn->cancelCallback();
 
@@ -571,14 +575,52 @@ void IPlugAPPHost::CloseAudio()
     if (mDAC->isStreamRunning())
     {
       mAudioEnding = true;
-    
-      while (!mAudioDone)
+
+      // Wait for the audio callback to acknowledge the fade-out, but never
+      // block forever: mAudioDone is only set from inside the callback, so if
+      // the callback has stopped being serviced it never flips. Cap the wait.
+      int waitedMs = 0;
+      while (!mAudioDone && waitedMs < 1000)
+      {
         Sleep(10);
-      
-      mDAC->abortStream();
+        waitedMs += 10;
+      }
     }
-    
-    mDAC->closeStream();
+
+    // Tear the stream down on a worker thread guarded by a timeout. On a
+    // healthy device abortStream()/closeStream() return immediately and we
+    // join right away. But if the device has stopped being serviced (e.g. over
+    // Remote Desktop a stream opens yet is never clocked) these RtAudio calls
+    // block forever — and on the UI thread, inside WM_DESTROY, that hangs
+    // shutdown before PostQuitMessage and leaves a windowless zombie process.
+    // If teardown doesn't finish in time, abandon (leak) the RtAudio instance
+    // and carry on: the process is exiting so the OS reclaims it, and leaking
+    // keeps the detached worker's pointer valid until then.
+    RtAudio* pDAC = mDAC.get();
+    auto done = std::make_shared<std::atomic<bool>>(false);
+    std::thread worker([pDAC, done]() {
+      if (pDAC->isStreamRunning())
+        pDAC->abortStream();
+      pDAC->closeStream();
+      done->store(true, std::memory_order_release);
+    });
+
+    int waitedMs = 0;
+    while (!done->load(std::memory_order_acquire) && waitedMs < 2000)
+    {
+      Sleep(10);
+      waitedMs += 10;
+    }
+
+    if (done->load(std::memory_order_acquire))
+    {
+      worker.join();
+    }
+    else
+    {
+      worker.detach();
+      mDAC.release(); // leak the wedged RtAudio; OS reclaims at process exit
+    }
   }
 }
 
@@ -587,18 +629,20 @@ bool IPlugAPPHost::InitAudio(uint32_t inID, uint32_t outID, uint32_t sr, uint32_
   CloseAudio();
 
   RtAudio::StreamParameters iParams, oParams;
+  const uint32_t requestedInputChans = GetPlug()->MaxNChannels(ERoute::kInput);
+  const uint32_t requestedOutputChans = GetPlug()->MaxNChannels(ERoute::kOutput);
+
   iParams.deviceId = inID;
-  iParams.nChannels = GetPlug()->MaxNChannels(ERoute::kInput); // TODO: flexible channel count
   iParams.firstChannel = 0; // TODO: flexible channel count
 
   oParams.deviceId = outID;
-  oParams.nChannels = GetPlug()->MaxNChannels(ERoute::kOutput); // TODO: flexible channel count
+  oParams.nChannels = requestedOutputChans; // TODO: flexible channel count
   oParams.firstChannel = 0; // TODO: flexible channel count
 
   mBufferSize = iovs; // mBufferSize may get changed by stream
 
   DBGMSG("trying to start audio stream @ %i sr, buffer size %i\nindev = %s\noutdev = %s\ninputs = %i\noutputs = %i\n",
-    sr, mBufferSize, GetAudioDeviceName(inID).c_str(), GetAudioDeviceName(outID).c_str(), iParams.nChannels, oParams.nChannels);
+    sr, mBufferSize, GetAudioDeviceName(inID).c_str(), GetAudioDeviceName(outID).c_str(), requestedInputChans, oParams.nChannels);
 
   RtAudio::StreamOptions options;
   options.flags = RTAUDIO_NONINTERLEAVED;
@@ -610,12 +654,37 @@ bool IPlugAPPHost::InitAudio(uint32_t inID, uint32_t outID, uint32_t sr, uint32_
   mVecWait = 0;
   mAudioEnding = false;
   mAudioDone = false;
+  mOpenedInputChans = 0;
+  mOpenedOutputChans = 0;
   
   mIPlug->SetBlockSize(APP_SIGNAL_VECTOR_SIZE);
   mIPlug->SetSampleRate(mSampleRate);
   mIPlug->OnReset();
 
-  auto status = mDAC->openStream(&oParams, iParams.nChannels > 0 ? &iParams : nullptr, RTAUDIO_FLOAT64, sr, &mBufferSize, &AudioCallback, this, &options);
+  auto tryOpenStream = [&](uint32_t inputChans) {
+    iParams.nChannels = inputChans;
+    return mDAC->openStream(&oParams, inputChans > 0 ? &iParams : nullptr,
+                            RTAUDIO_FLOAT64, sr, &mBufferSize, &AudioCallback, this, &options);
+  };
+
+  auto status = tryOpenStream(requestedInputChans);
+
+  // If requested channel count fails (e.g., stereo on a mono mic), try fewer channels
+  if (status != RtAudioErrorType::RTAUDIO_NO_ERROR && requestedInputChans > 1)
+  {
+    DBGMSG("Retrying audio stream with 1 input channel after failure: %s\n", mDAC->getErrorText().c_str());
+    if (mDAC->isStreamOpen())
+      mDAC->closeStream();
+    status = tryOpenStream(1);
+  }
+
+  if (status != RtAudioErrorType::RTAUDIO_NO_ERROR && requestedInputChans > 0)
+  {
+    DBGMSG("Retrying audio stream with no input channels after failure: %s\n", mDAC->getErrorText().c_str());
+    if (mDAC->isStreamOpen())
+      mDAC->closeStream();
+    status = tryOpenStream(0);
+  }
 
   if (status != RtAudioErrorType::RTAUDIO_NO_ERROR)
   {
@@ -623,15 +692,25 @@ bool IPlugAPPHost::InitAudio(uint32_t inID, uint32_t outID, uint32_t sr, uint32_
     return false;
   }
 
-  for (int i = 0; i < iParams.nChannels; i++)
+  mOpenedInputChans = iParams.nChannels;
+  mOpenedOutputChans = oParams.nChannels;
+
+  // Allocate input buffer pointers up to the plugin's requested count.
+  // If the device has fewer channels (e.g., mono mic for a stereo plugin),
+  // extra channels point to a silence buffer so ProcessBlock doesn't read
+  // out of bounds.
+  for (uint32_t i = 0; i < requestedInputChans; i++)
   {
-    mInputBufPtrs.Add(nullptr); //will be set in callback
+    mInputBufPtrs.Add(nullptr); //will be set in callback (or silence for missing channels)
   }
-    
-  for (int i = 0; i < oParams.nChannels; i++)
+
+  for (uint32_t i = 0; i < mOpenedOutputChans; i++)
   {
     mOutputBufPtrs.Add(nullptr); //will be set in callback
   }
+
+  // Pre-allocate silence buffer for missing input channels
+  mSilenceBuf.resize(mBufferSize, 0.0);
     
   if (mDAC->startStream() != RTAUDIO_NO_ERROR)
   {
@@ -702,8 +781,8 @@ int IPlugAPPHost::AudioCallback(void* pOutputBuffer, void* pInputBuffer, uint32_
 {
   IPlugAPPHost* _this = (IPlugAPPHost*) pUserData;
 
-  int nins = _this->GetPlug()->MaxNChannels(ERoute::kInput);
-  int nouts = _this->GetPlug()->MaxNChannels(ERoute::kOutput);
+  int nins = static_cast<int>(_this->mOpenedInputChans);
+  int nouts = static_cast<int>(_this->mOpenedOutputChans);
   
   double* pInputBufferD = static_cast<double*>(pInputBuffer);
   double* pOutputBufferD = static_cast<double*>(pOutputBuffer);
@@ -726,12 +805,19 @@ int IPlugAPPHost::AudioCallback(void* pOutputBuffer, void* pInputBuffer, uint32_
         {
           _this->mInputBufPtrs.Set(c, (pInputBufferD + (c * nFrames)) + i);
         }
-        
+        // Point missing input channels at silence buffer (e.g., mono mic → stereo plugin)
+        int nPluginIns = _this->mInputBufPtrs.GetSize();
+        for (int c = nins; c < nPluginIns; c++)
+        {
+          _this->mSilenceBuf.assign(_this->mSilenceBuf.size(), 0.0);
+          _this->mInputBufPtrs.Set(c, _this->mSilenceBuf.data());
+        }
+
         for (int c = 0; c < nouts; c++)
         {
           _this->mOutputBufPtrs.Set(c, (pOutputBufferD + (c * nFrames)) + i);
         }
-        
+
         _this->mIPlug->AppProcess(_this->mInputBufPtrs.GetList(), _this->mOutputBufPtrs.GetList(), APP_SIGNAL_VECTOR_SIZE);
 
         _this->mSamplesElapsed += APP_SIGNAL_VECTOR_SIZE;
@@ -798,4 +884,3 @@ void IPlugAPPHost::ErrorCallback(RtAudioErrorType type, const std::string &error
 {
   std::cerr << "\nerrorCallback: " << errorText << "\n\n";
 }
-

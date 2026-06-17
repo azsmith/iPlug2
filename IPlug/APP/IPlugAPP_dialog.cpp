@@ -527,21 +527,44 @@ static void ClientResize(HWND hWnd, int width, int height)
 {
   RECT rcClient, rcWindow;
   POINT ptDiff;
-  int screenwidth, screenheight;
-  int x, y;
-  
-  screenwidth  = GetSystemMetrics(SM_CXSCREEN);
-  screenheight = GetSystemMetrics(SM_CYSCREEN);
-  x = (screenwidth / 2) - (width / 2);
-  y = (screenheight / 2) - (height / 2);
-  
+
   GetClientRect(hWnd, &rcClient);
   GetWindowRect(hWnd, &rcWindow);
 
+  // Non-client frame (title bar + borders), so we can size the whole
+  // window from a desired client (editor) size.
   ptDiff.x = (rcWindow.right - rcWindow.left) - rcClient.right;
   ptDiff.y = (rcWindow.bottom - rcWindow.top) - rcClient.bottom;
-  
-  SetWindowPos(hWnd, 0, x, y, width + ptDiff.x, height + ptDiff.y, 0);
+
+  int winW = width + ptDiff.x;
+  int winH = height + ptDiff.y;
+
+  // Default to the primary screen metrics; centre the window within it.
+  RECT rcWork;
+  rcWork.left = rcWork.top = 0;
+  rcWork.right = GetSystemMetrics(SM_CXSCREEN);
+  rcWork.bottom = GetSystemMetrics(SM_CYSCREEN);
+
+#ifdef OS_WIN
+  // Clamp the window to the work area of the monitor it's on (excludes the
+  // taskbar) so the default editor size can't exceed small / high-DPI
+  // displays (e.g. handheld PCs) and push controls off-screen with no way
+  // to resize. Win-only: SWELL lacks GetMonitorInfo/MonitorFromWindow.
+  HMONITOR mon = MonitorFromWindow(hWnd, MONITOR_DEFAULTTONEAREST);
+  MONITORINFO mi = { sizeof(mi) };
+  if (mon && GetMonitorInfo(mon, &mi))
+    rcWork = mi.rcWork;
+
+  const int workW = rcWork.right - rcWork.left;
+  const int workH = rcWork.bottom - rcWork.top;
+  if (winW > workW) winW = workW;
+  if (winH > workH) winH = workH;
+#endif
+
+  const int x = rcWork.left + ((rcWork.right - rcWork.left) - winW) / 2;
+  const int y = rcWork.top  + ((rcWork.bottom - rcWork.top) - winH) / 2;
+
+  SetWindowPos(hWnd, 0, x, y, winW, winH, 0);
 }
 
 //static

@@ -52,6 +52,7 @@ if(NOT TARGET iPlug2::AUv2)
     "-framework CoreAudio"
     "-framework CoreMIDI"
     "-framework Cocoa"
+    "-framework Carbon"
   )
 
   target_link_libraries(iPlug2::AUv2 INTERFACE iPlug2::IPlug)

@@ -93,33 +93,24 @@ function(iplug_embed_auv3ios_in_app app_target project_name)
 
   add_dependencies(${app_target} ${appex_target})
 
-  # Post-build: Embed framework and appex in iOS app bundle
-  # iOS bundles have flat structure (no Contents/ directory)
-  if(XCODE)
-    add_custom_command(TARGET ${app_target} POST_BUILD
-      # Copy framework to App/Frameworks/ (preserving structure)
-      COMMAND ${CMAKE_COMMAND} -E make_directory
-        "$<TARGET_BUNDLE_DIR:${app_target}>/Frameworks"
-      COMMAND cp -R
-        "${CMAKE_BINARY_DIR}/out/$<CONFIG>/${project_name}AU.framework"
-        "$<TARGET_BUNDLE_DIR:${app_target}>/Frameworks/"
-      # Copy appex to App/PlugIns/
-      COMMAND ${CMAKE_COMMAND} -E make_directory
-        "$<TARGET_BUNDLE_DIR:${app_target}>/PlugIns"
-      COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_BINARY_DIR}/out/$<CONFIG>/${project_name}AUv3.appex"
-        "$<TARGET_BUNDLE_DIR:${app_target}>/PlugIns/${project_name}AUv3.appex"
-      COMMENT "Embedding iOS AUv3 (framework + appex) in ${project_name}.app"
+  # Embed framework and appex in iOS app bundle
+  if(XCODE AND CMAKE_VERSION VERSION_GREATER_EQUAL "3.20")
+    # Use native Xcode embedding — works correctly with archive builds
+    set_target_properties(${app_target} PROPERTIES
+      XCODE_EMBED_FRAMEWORKS "${framework_target}"
+      XCODE_EMBED_FRAMEWORKS_CODE_SIGN_ON_COPY YES
+      XCODE_EMBED_FRAMEWORKS_REMOVE_HEADERS_ON_COPY YES
+      XCODE_EMBED_APP_EXTENSIONS "${appex_target}"
+      XCODE_EMBED_APP_EXTENSIONS_CODE_SIGN_ON_COPY YES
     )
   else()
+    # Fallback: manual post-build copy for non-Xcode generators
     add_custom_command(TARGET ${app_target} POST_BUILD
-      # Copy framework to App/Frameworks/
       COMMAND ${CMAKE_COMMAND} -E make_directory
         "$<TARGET_BUNDLE_DIR:${app_target}>/Frameworks"
       COMMAND cp -R
         "${CMAKE_BINARY_DIR}/out/${project_name}AU.framework"
         "$<TARGET_BUNDLE_DIR:${app_target}>/Frameworks/"
-      # Copy appex to App/PlugIns/
       COMMAND ${CMAKE_COMMAND} -E make_directory
         "$<TARGET_BUNDLE_DIR:${app_target}>/PlugIns"
       COMMAND ${CMAKE_COMMAND} -E copy_directory
