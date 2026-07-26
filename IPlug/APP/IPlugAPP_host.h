@@ -232,6 +232,12 @@ public:
   static WDL_DLGRET MainDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPARAM lParam);
 
   IPlugAPP* GetPlug() { return mIPlug.get(); }
+
+  /** Grainsmith vendored addition: read-only access for the in-app MIDI-out
+   * route check (GrainulatorV2/Controller/MidiOutRouteCheck.h). */
+  const char* GetMidiOutDevName() const { return mState.mMidiOutDev.Get(); }
+  const std::vector<std::string>& GetMIDIOutputDevNames() const { return mMidiOutputDevNames; }
+
 private:
   std::unique_ptr<IPlugAPP> mIPlug = nullptr;
   std::unique_ptr<RtAudio> mDAC = nullptr;
