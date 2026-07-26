@@ -34,6 +34,7 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <string_view>
 
 #include "wdltypes.h"
 #include "wdlstring.h"
@@ -237,6 +238,16 @@ public:
    * route check (GrainulatorV2/Controller/MidiOutRouteCheck.h). */
   const char* GetMidiOutDevName() const { return mState.mMidiOutDev.Get(); }
   const std::vector<std::string>& GetMIDIOutputDevNames() const { return mMidiOutputDevNames; }
+
+  /** Grainsmith: select an output port AND record it in state. SelectMIDIDevice
+   *  alone does not update mState (the prefs dialog does that itself), and it
+   *  returns true after silently falling back to "off" when the port is gone. */
+  bool SelectAndStoreMidiOutDev(const char* portName)
+  {
+    mState.mMidiOutDev.Set(portName);
+    if (!SelectMIDIDevice(ERoute::kOutput, portName)) return false;
+    return std::string_view(mState.mMidiOutDev.Get()) == portName;
+  }
 
 private:
   std::unique_ptr<IPlugAPP> mIPlug = nullptr;

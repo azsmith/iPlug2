@@ -323,6 +323,13 @@ void IPlugAPPHost::ProbeMidiIO()
     return;
   else
   {
+    // Grainsmith: clear before repopulating. Without this, repeat calls (e.g.
+    // the MIDI-out feedback banner's hot-plug re-probe) duplicate every
+    // device name each time, breaking single-candidate matching and the
+    // prefs dialog's device combos.
+    mMidiInputDevNames.clear();
+    mMidiOutputDevNames.clear();
+
     int nInputPorts = mMidiIn->getPortCount();
 
     mMidiInputDevNames.push_back(OFF_TEXT);
