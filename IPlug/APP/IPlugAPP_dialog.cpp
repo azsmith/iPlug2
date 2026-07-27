@@ -584,7 +584,19 @@ WDL_DLGRET IPlugAPPHost::MainDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPA
         DBGMSG("couldn't attach gui\n");
       }
 
-      ClientResize(hwndDlg, pPlug->GetEditorWidth(), pPlug->GetEditorHeight());
+      int editorW = pPlug->GetEditorWidth();
+      int editorH = pPlug->GetEditorHeight();
+
+#ifdef OS_WIN
+      // Editor dimensions are logical; the process is per-monitor DPI aware,
+      // so the client area must be sized in physical pixels or the DPI-scaled
+      // UI gets clipped (matches the scaling in WM_GETMINMAXINFO/EditorResize).
+      const float initialScale = GetScaleForHWND(hwndDlg);
+      editorW = static_cast<int>(editorW * initialScale + 0.5f);
+      editorH = static_cast<int>(editorH * initialScale + 0.5f);
+#endif
+
+      ClientResize(hwndDlg, editorW, editorH);
 
       ShowWindow(hwndDlg, SW_SHOW);
 
@@ -851,8 +863,11 @@ WDL_DLGRET IPlugAPPHost::MainDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPA
       IEditorDelegate* pPlug = dynamic_cast<IEditorDelegate*>(pAppHost->GetPlug());
 #endif
 
-      int w = pPlug->GetEditorWidth(); 
-      int h = pPlug->GetEditorHeight();
+      // Editor dimensions are logical — convert to physical pixels at the new
+      // DPI (from wParam, since the window may still report the old DPI here).
+      const float newScale = static_cast<float>(dpi) / USER_DEFAULT_SCREEN_DPI;
+      int w = static_cast<int>(pPlug->GetEditorWidth() * newScale + 0.5f);
+      int h = static_cast<int>(pPlug->GetEditorHeight() * newScale + 0.5f);
 
       SetWindowPos(hwndDlg, 0, rect->left, rect->top, w + ptDiff.x, h + ptDiff.y, 0);
 
@@ -872,7 +887,24 @@ WDL_DLGRET IPlugAPPHost::MainDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPA
         {
           RECT r;
           GetClientRect(hwndDlg, &r);
-          pPlug->OnParentWindowResize(static_cast<int>(r.right), static_cast<int>(r.bottom));
+          int clientW = static_cast<int>(r.right);
+          int clientH = static_cast<int>(r.bottom);
+
+#if defined(OS_WIN) && defined(VISAGE_EDITOR_DELEGATE)
+          // The client rect is in physical pixels (per-monitor DPI aware
+          // process) but the Visage editor delegate works in logical units —
+          // pass logical so its size handling doesn't have to guess. A
+          // clamped or user-dragged physical size is otherwise misread as
+          // logical and the child window overflows the frame at >100% DPI.
+          const float clientScale = GetScaleForHWND(hwndDlg);
+          if (clientScale > 1.01f)
+          {
+            clientW = static_cast<int>(clientW / clientScale + 0.5f);
+            clientH = static_cast<int>(clientH / clientScale + 0.5f);
+          }
+#endif
+
+          pPlug->OnParentWindowResize(clientW, clientH);
         }
         return 1;
       }
