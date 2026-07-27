@@ -249,15 +249,33 @@ void IPlugVST3::SendParameterValueFromUI(int paramIdx, double normalisedValue)
 void IPlugVST3::SetLatency(int latency)
 {
   // N.B. set the latency even if the handler is not yet set
-  
+
+  const bool changed = GetLatency() != latency;
+
   IPlugProcessor::SetLatency(latency);
 
-  if (componentHandler)
+  // Only notify the host when the value actually changed, and defer the
+  // notification to the idle timer: SetLatency() is typically called from
+  // OnReset(), i.e. inside the host's setupProcessing()/setActive() call,
+  // where the VST3 spec forbids restartComponent(). Hosts such as Cubase
+  // react to kLatencyChanged by deactivating and reactivating the plug-in
+  // (which runs OnReset() again), so an unconditional in-place notification
+  // creates an endless reconfigure loop that stalls the host.
+  if (changed)
+    mLatencyChangePending = true;
+}
+
+void IPlugVST3::OnTimer(Timer& t)
+{
+  IPlugAPIBase::OnTimer(t);
+
+  if (mLatencyChangePending.load() && componentHandler)
   {
     FUnknownPtr<IComponentHandler> handler(componentHandler);
 
     if (handler)
     {
+      mLatencyChangePending = false;
       handler->restartComponent(kLatencyChanged);
     }
   }
