@@ -64,33 +64,59 @@ bool wantsAudioInput()
 {
   if (audioUnit == nil)
     return;
-  
+
   avAudioUnit = audioUnit;
-  
+
   [engine attachNode:avAudioUnit];
 
   self.currentAudioUnit = avAudioUnit.AUAudioUnit;
-  
+
   [self setupSession];
-    
+
+  if (wantsAudioInput())
+  {
+    [AVAudioApplication requestRecordPermissionWithCompletionHandler:^(BOOL granted) {
+      dispatch_async(dispatch_get_main_queue(), ^{
+        if (!granted)
+          NSLog(@"Microphone permission denied");
+
+        [self startEngineAndComplete:completionBlock];
+      });
+    }];
+  }
+  else
+  {
+    [self startEngineAndComplete:completionBlock];
+  }
+}
+
+- (void) startEngineAndComplete:(void (^) (void))completionBlock
+{
+  NSError* error = nil;
+
 #ifdef _DEBUG
   [self printEngineInfo];
   [self printSessionInfo];
 #endif
-  
+
   [self makeEngineConnections];
   [self addNotifications];
-  
+
   AVAudioSession* session = [AVAudioSession sharedInstance];
 
   if (![session setActive:TRUE error: &error])
   {
     NSLog(@"Error setting session active: %@", [error localizedDescription]);
   }
-  
-  if (![engine startAndReturnError: &error])
-  {
-    NSLog(@"engine failed to start: %@", error);
+
+  @try {
+    if (![engine startAndReturnError: &error])
+    {
+      NSLog(@"engine failed to start: %@", error);
+    }
+  }
+  @catch (NSException *exception) {
+    NSLog(@"NSException starting audio engine: %@, Reason: %@", exception.name, exception.reason);
   }
 
   completionBlock();
@@ -122,7 +148,7 @@ bool wantsAudioInput()
   AVAudioSession* session = [AVAudioSession sharedInstance];
   NSError* error = nil;
 
-  AVAudioSessionCategoryOptions options = AVAudioSessionCategoryOptionDefaultToSpeaker | AVAudioSessionCategoryOptionAllowBluetooth;
+  AVAudioSessionCategoryOptions options = AVAudioSessionCategoryOptionDefaultToSpeaker | AVAudioSessionCategoryOptionAllowBluetooth | AVAudioSessionCategoryOptionAllowBluetoothA2DP;
   [session setCategory: wantsAudioInput() ? AVAudioSessionCategoryPlayAndRecord
                                          : AVAudioSessionCategoryPlayback
                   withOptions:options error: &error];
@@ -153,14 +179,25 @@ bool wantsAudioInput()
   {
     AVAudioNode* inputNode = [engine inputNode];
     AVAudioFormat* inputNodeFormat = [inputNode inputFormatForBus:0];
-    
-    @autoreleasepool {
-      @try {
-        [engine connect:inputNode to:avAudioUnit format: inputNodeFormat];
+
+    // Check for valid input format before connecting (avoids crash on devices
+    // where microphone permission hasn't been granted or input is unavailable)
+    if (inputNodeFormat.sampleRate > 0 && inputNodeFormat.channelCount > 0)
+    {
+      @autoreleasepool {
+        @try {
+          [engine connect:inputNode to:avAudioUnit format: inputNodeFormat];
+        }
+        @catch (NSException *exception) {
+          NSLog(@"NSException when trying to connect input node: %@, Reason: %@", exception.name, exception.reason);
+          [engine disconnectNodeInput:avAudioUnit];
+        }
       }
-      @catch (NSException *exception) {
-        NSLog(@"NSException when trying to connect input node: %@, Reason: %@", exception.name, exception.reason);
-      }
+    }
+    else
+    {
+      NSLog(@"Skipping input node connection: invalid format (SR: %g, chans: %u)",
+            inputNodeFormat.sampleRate, (unsigned)inputNodeFormat.channelCount);
     }
   }
   
@@ -230,12 +267,36 @@ bool wantsAudioInput()
   NSNotificationCenter* notifCtr = [NSNotificationCenter defaultCenter];
 
   [notifCtr addObserver: self selector: @selector (onEngineConfigurationChange:) name:AVAudioEngineConfigurationChangeNotification object: engine];
+  [notifCtr addObserver: self selector: @selector (onRouteChange:) name:AVAudioSessionRouteChangeNotification object: [AVAudioSession sharedInstance]];
 }
 
 #pragma mark Notifications
 - (void) onEngineConfigurationChange: (NSNotification*) notification
 {
   [self restartAudioEngine];
+}
+
+- (void) onRouteChange: (NSNotification*) notification
+{
+  NSInteger reason = [notification.userInfo[AVAudioSessionRouteChangeReasonKey] integerValue];
+
+  if (reason == AVAudioSessionRouteChangeReasonNewDeviceAvailable ||
+      reason == AVAudioSessionRouteChangeReasonOldDeviceUnavailable)
+  {
+    [engine stop];
+    [engine disconnectNodeOutput:avAudioUnit];
+    [self makeEngineConnections];
+
+    NSError* error = nil;
+    if (![engine startAndReturnError:&error])
+    {
+      NSLog(@"Error restarting engine after route change: %@", error);
+    }
+
+#ifdef _DEBUG
+    [self printSessionInfo];
+#endif
+  }
 }
 
 @end

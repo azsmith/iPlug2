@@ -22,6 +22,8 @@
 #include <cstring>
 #include <cmath>
 #include <functional>
+#include <thread>
+#include <atomic>
 #include "ptrlist.h"
 #include "mutex.h"
 
@@ -94,6 +96,23 @@ public:
 private:
   long ID = 0;
   ITimerFunction mTimerFunc;
+};
+#elif defined OS_LINUX
+// Linux: thread-based timer. NOTE: fires on a worker thread, not the host main
+// thread — fine for the build/load spike; production should marshal via the CLAP
+// timer-support / main-thread extension.
+class Timer_impl : public Timer
+{
+public:
+  Timer_impl(ITimerFunction func, uint32_t intervalMs);
+  ~Timer_impl();
+  void Stop() override;
+
+private:
+  std::thread mThread;
+  std::atomic<bool> mRunning { false };
+  ITimerFunction mTimerFunc;
+  uint32_t mIntervalMs;
 };
 #else
   #error NOT IMPLEMENTED

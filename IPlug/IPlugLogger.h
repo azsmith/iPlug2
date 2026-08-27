@@ -95,7 +95,7 @@ BEGIN_IPLUG_NAMESPACE
       char logFilePath[MAX_MACOS_PATH_LEN];
       snprintf(logFilePath, MAX_MACOS_PATH_LEN, "%s/%s", getenv("HOME"), LOGFILE);
   #endif
-      mFP = fopenUTF8(logFilePath, "w");
+      mFP = fopen(logFilePath, "w");
       assert(mFP);
       
       DBGMSG("Logging to %s\n", logFilePath);
@@ -144,7 +144,7 @@ BEGIN_IPLUG_NAMESPACE
     int i = (int) strlen(cStr);
     cStr[i++] = tz >= 0 ? '+' : '-';
     if (tz < 0) tz = -tz;
-    snprintf(&cStr[i], 32, "%02d%02d", tz / 60, tz % 60);
+    snprintf(&cStr[i], sizeof(cStr) - i, "%02d%02d", tz / 60, tz % 60); // remaining space, not full buffer (fortify)
     
     static char sTimeStr[32];
     strcpy(sTimeStr, cStr);

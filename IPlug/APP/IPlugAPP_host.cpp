@@ -12,6 +12,7 @@
 
 #ifdef OS_WIN
 #include <sys/stat.h>
+#include "win32_utf8.h"
 #endif
 
 #include "IPlugLogger.h"
@@ -85,8 +86,8 @@ void IPlugAPPHost::CloseWindow()
 bool IPlugAPPHost::InitState()
 {
 #if defined OS_WIN
-  TCHAR strPath[MAX_PATH_LEN];
-  SHGetFolderPathA( NULL, CSIDL_LOCAL_APPDATA, NULL, 0, strPath );
+  char strPath[MAX_PATH_LEN];
+  SHGetSpecialFolderPathUTF8(NULL, strPath, MAX_PATH_LEN, CSIDL_LOCAL_APPDATA, FALSE);
   mINIPath.SetFormatted(MAX_PATH_LEN, "%s\\%s\\", strPath, BUNDLE_NAME);
 #elif defined OS_MAC
   mINIPath.SetFormatted(MAX_PATH_LEN, "%s/Library/Application Support/%s/", getenv("HOME"), BUNDLE_NAME);
@@ -293,12 +294,15 @@ int IPlugAPPHost::GetMIDIPortNumber(ERoute direction, const char* nameToTest) co
 
 void IPlugAPPHost::ProbeAudioIO()
 {
+  mAudioInputDevIDs.clear();
+  mAudioOutputDevIDs.clear();
+
+  if (!mDAC)
+    return;
+
   DBGMSG("\nRtAudio Version %s", RtAudio::getVersion().c_str());
 
   RtAudio::DeviceInfo info;
-
-  mAudioInputDevIDs.clear();
-  mAudioOutputDevIDs.clear();
 
   auto deviceIDs = mDAC->getDeviceIds();
 
@@ -448,11 +452,15 @@ uint32_t IPlugAPPHost::ResolveSystemSampleRate(uint32_t inputDeviceId, uint32_t 
 bool IPlugAPPHost::TryToChangeAudioDriverType()
 {
   CloseAudio();
-  
+
   if (mDAC)
   {
     mDAC = nullptr;
   }
+
+  // Skip RtAudio initialization in no-I/O mode or screenshot mode
+  if (mNoIO || IsScreenshotMode())
+    return true;
 
 #if defined OS_WIN
   if (mState.mAudioDriverType == kDeviceASIO)
@@ -479,6 +487,10 @@ bool IPlugAPPHost::TryToChangeAudioDriverType()
 
 bool IPlugAPPHost::TryToChangeAudio()
 {
+  // Skip audio initialization in no-I/O mode or screenshot mode
+  if (mNoIO || IsScreenshotMode())
+    return true;
+
 #if defined OS_WIN
   // ASIO has one device, use the output for the input ID
   auto inputID = GetAudioDeviceID(mState.mAudioDriverType == kDeviceASIO ? mState.mAudioOutDev.Get() : mState.mAudioInDev.Get());
@@ -698,6 +710,15 @@ bool IPlugAPPHost::InitAudio(uint32_t inID, uint32_t outID, uint32_t sr, uint32_
 
   auto status = tryOpenStream(requestedInputChans);
 
+  // If requested channel count fails (e.g., stereo on a mono mic), try fewer channels
+  if (status != RtAudioErrorType::RTAUDIO_NO_ERROR && requestedInputChans > 1)
+  {
+    DBGMSG("Retrying audio stream with 1 input channel after failure: %s\n", mDAC->getErrorText().c_str());
+    if (mDAC->isStreamOpen())
+      mDAC->closeStream();
+    status = tryOpenStream(1);
+  }
+
   if (status != RtAudioErrorType::RTAUDIO_NO_ERROR && requestedInputChans > 0)
   {
     DBGMSG("Retrying audio stream with no input channels after failure: %s\n", mDAC->getErrorText().c_str());
@@ -715,15 +736,22 @@ bool IPlugAPPHost::InitAudio(uint32_t inID, uint32_t outID, uint32_t sr, uint32_
   mOpenedInputChans = iParams.nChannels;
   mOpenedOutputChans = oParams.nChannels;
 
-  for (uint32_t i = 0; i < mOpenedInputChans; i++)
+  // Allocate input buffer pointers up to the plugin's requested count.
+  // If the device has fewer channels (e.g., mono mic for a stereo plugin),
+  // extra channels point to a silence buffer so ProcessBlock doesn't read
+  // out of bounds.
+  for (uint32_t i = 0; i < requestedInputChans; i++)
   {
-    mInputBufPtrs.Add(nullptr); //will be set in callback
+    mInputBufPtrs.Add(nullptr); //will be set in callback (or silence for missing channels)
   }
-    
+
   for (uint32_t i = 0; i < mOpenedOutputChans; i++)
   {
     mOutputBufPtrs.Add(nullptr); //will be set in callback
   }
+
+  // Pre-allocate silence buffer for missing input channels
+  mSilenceBuf.resize(mBufferSize, 0.0);
     
   if (mDAC->startStream() != RTAUDIO_NO_ERROR)
   {
@@ -738,6 +766,10 @@ bool IPlugAPPHost::InitAudio(uint32_t inID, uint32_t outID, uint32_t sr, uint32_
 
 bool IPlugAPPHost::InitMidi()
 {
+  // Skip MIDI initialization in no-I/O mode or screenshot mode
+  if (mNoIO || IsScreenshotMode())
+    return true;
+
   try
   {
     mMidiIn = std::make_unique<RtMidiIn>();
@@ -814,12 +846,19 @@ int IPlugAPPHost::AudioCallback(void* pOutputBuffer, void* pInputBuffer, uint32_
         {
           _this->mInputBufPtrs.Set(c, (pInputBufferD + (c * nFrames)) + i);
         }
-        
+        // Point missing input channels at silence buffer (e.g., mono mic → stereo plugin)
+        int nPluginIns = _this->mInputBufPtrs.GetSize();
+        for (int c = nins; c < nPluginIns; c++)
+        {
+          _this->mSilenceBuf.assign(_this->mSilenceBuf.size(), 0.0);
+          _this->mInputBufPtrs.Set(c, _this->mSilenceBuf.data());
+        }
+
         for (int c = 0; c < nouts; c++)
         {
           _this->mOutputBufPtrs.Set(c, (pOutputBufferD + (c * nFrames)) + i);
         }
-        
+
         _this->mIPlug->AppProcess(_this->mInputBufPtrs.GetList(), _this->mOutputBufPtrs.GetList(), APP_SIGNAL_VECTOR_SIZE);
 
         _this->mSamplesElapsed += APP_SIGNAL_VECTOR_SIZE;

@@ -12,12 +12,17 @@
 #include "config.h"
 #include "resource.h"
 
+#include <ctime>
+
 #ifdef OS_WIN
 #include "asio.h"
+#include "win32_utf8.h"
 extern float GetScaleForHWND(HWND hWnd);
 #define GET_MENU() GetMenu(gHWND)
+extern bool SaveWindowScreenshot(HWND hwnd, const char* path);
 #elif defined OS_MAC
 #define GET_MENU() SWELL_GetCurrentMenu()
+extern "C" bool SaveWindowScreenshot(void* hwnd, const char* path);
 #endif
 
 using namespace iplug;
@@ -26,6 +31,8 @@ using namespace iplug;
 #include "IGraphics.h"
 using namespace igraphics;
 #endif
+
+#define IDT_SCREENSHOT_TIMER 1001
 
 
 // check the input and output devices, find matching srs
@@ -310,6 +317,12 @@ WDL_DLGRET IPlugAPPHost::PreferencesDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wPar
   switch(uMsg)
   {
     case WM_INITDIALOG:
+#ifdef OS_WIN
+      WDL_UTF8_HookComboBox(GetDlgItem(hwndDlg, IDC_COMBO_AUDIO_IN_DEV));
+      WDL_UTF8_HookComboBox(GetDlgItem(hwndDlg, IDC_COMBO_AUDIO_OUT_DEV));
+      WDL_UTF8_HookComboBox(GetDlgItem(hwndDlg, IDC_COMBO_MIDI_IN_DEV));
+      WDL_UTF8_HookComboBox(GetDlgItem(hwndDlg, IDC_COMBO_MIDI_OUT_DEV));
+#endif
       _this->PopulatePreferencesDialog(hwndDlg);
       mTempState = mState;
       
@@ -519,21 +532,44 @@ static void ClientResize(HWND hWnd, int width, int height)
 {
   RECT rcClient, rcWindow;
   POINT ptDiff;
-  int screenwidth, screenheight;
-  int x, y;
-  
-  screenwidth  = GetSystemMetrics(SM_CXSCREEN);
-  screenheight = GetSystemMetrics(SM_CYSCREEN);
-  x = (screenwidth / 2) - (width / 2);
-  y = (screenheight / 2) - (height / 2);
-  
+
   GetClientRect(hWnd, &rcClient);
   GetWindowRect(hWnd, &rcWindow);
 
+  // Non-client frame (title bar + borders), so we can size the whole
+  // window from a desired client (editor) size.
   ptDiff.x = (rcWindow.right - rcWindow.left) - rcClient.right;
   ptDiff.y = (rcWindow.bottom - rcWindow.top) - rcClient.bottom;
-  
-  SetWindowPos(hWnd, 0, x, y, width + ptDiff.x, height + ptDiff.y, 0);
+
+  int winW = width + ptDiff.x;
+  int winH = height + ptDiff.y;
+
+  // Default to the primary screen metrics; centre the window within it.
+  RECT rcWork;
+  rcWork.left = rcWork.top = 0;
+  rcWork.right = GetSystemMetrics(SM_CXSCREEN);
+  rcWork.bottom = GetSystemMetrics(SM_CYSCREEN);
+
+#ifdef OS_WIN
+  // Clamp the window to the work area of the monitor it's on (excludes the
+  // taskbar) so the default editor size can't exceed small / high-DPI
+  // displays (e.g. handheld PCs) and push controls off-screen with no way
+  // to resize. Win-only: SWELL lacks GetMonitorInfo/MonitorFromWindow.
+  HMONITOR mon = MonitorFromWindow(hWnd, MONITOR_DEFAULTTONEAREST);
+  MONITORINFO mi = { sizeof(mi) };
+  if (mon && GetMonitorInfo(mon, &mi))
+    rcWork = mi.rcWork;
+
+  const int workW = rcWork.right - rcWork.left;
+  const int workH = rcWork.bottom - rcWork.top;
+  if (winW > workW) winW = workW;
+  if (winH > workH) winH = workH;
+#endif
+
+  const int x = rcWork.left + ((rcWork.right - rcWork.left) - winW) / 2;
+  const int y = rcWork.top  + ((rcWork.bottom - rcWork.top) - winH) / 2;
+
+  SetWindowPos(hWnd, 0, x, y, winW, winH, 0);
 }
 
 //static
@@ -556,7 +592,28 @@ WDL_DLGRET IPlugAPPHost::MainDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPA
       ClientResize(hwndDlg, pPlug->GetEditorWidth(), pPlug->GetEditorHeight());
 
       ShowWindow(hwndDlg, SW_SHOW);
+
+      // If in screenshot mode, start timer to take screenshot after UI initializes
+      if (pAppHost->IsScreenshotMode())
+      {
+        SetTimer(hwndDlg, IDT_SCREENSHOT_TIMER, 500, nullptr); // 500ms delay
+      }
+
       return 1;
+    }
+    case WM_TIMER:
+    {
+      if (wParam == IDT_SCREENSHOT_TIMER)
+      {
+        KillTimer(hwndDlg, IDT_SCREENSHOT_TIMER);
+
+        SaveWindowScreenshot(gHWND, pAppHost->GetScreenshotPath());
+
+        // Exit the application
+        DestroyWindow(hwndDlg);
+        return 0;
+      }
+      break;
     }
     case WM_DESTROY:
       pAppHost->CloseWindow();
@@ -617,6 +674,56 @@ WDL_DLGRET IPlugAPPHost::MainDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPA
 
           return 0;
         }
+#ifdef ID_SCREENSHOT
+        case ID_SCREENSHOT:
+        {
+          // Generate filename with timestamp
+          WDL_String path;
+          char timestamp[32];
+          time_t now = time(nullptr);
+          strftime(timestamp, sizeof(timestamp), "%Y%m%d_%H%M%S", localtime(&now));
+
+          // Get temp directory
+          #ifdef OS_WIN
+          char tempPath[MAX_PATH];
+          GetTempPathA(MAX_PATH, tempPath);
+          path.SetFormatted(512, "%s%s_screenshot_%s.png",
+                            tempPath,
+                            PLUG_NAME,
+                            timestamp);
+          #elif defined OS_MAC
+          const char* tmpDir = getenv("TMPDIR");
+          path.SetFormatted(512, "%s%s_screenshot_%s.png",
+                            tmpDir ? tmpDir : "/tmp/",
+                            PLUG_NAME,
+                            timestamp);
+          #endif
+
+          if (SaveWindowScreenshot(gHWND, path.Get()))
+          {
+            WDL_String msg;
+            msg.SetFormatted(512, "Screenshot saved to:\n%s\n\nOpen it?", path.Get());
+            int result = MessageBox(hwndDlg, msg.Get(), "Screenshot Saved", MB_YESNO);
+
+            if (result == IDYES)
+            {
+              #ifdef OS_WIN
+              ShellExecuteA(NULL, "open", path.Get(), NULL, NULL, SW_SHOWNORMAL);
+              #elif defined OS_MAC
+              WDL_String cmd;
+              cmd.SetFormatted(1024, "open \"%s\"", path.Get());
+              system(cmd.Get());
+              #endif
+            }
+          }
+          else
+          {
+            MessageBox(hwndDlg, "Failed to save screenshot", "Error", MB_OK);
+          }
+
+          return 0;
+        }
+#endif
 #if defined _DEBUG && !defined NO_IGRAPHICS
         case ID_LIVE_EDIT:
         {
