@@ -715,16 +715,49 @@ bool IPlugAPPHost::InitAudio(uint32_t inID, uint32_t outID, uint32_t sr, uint32_
   mOpenedInputChans = iParams.nChannels;
   mOpenedOutputChans = oParams.nChannels;
 
+  // The stream is closed here, so it is safe to rebuild the pointer lists; without this,
+  // every re-init (device change) grew them by another channel set.
+  mInputBufPtrs.Empty();
+  mOutputBufPtrs.Empty();
+
   for (uint32_t i = 0; i < mOpenedInputChans; i++)
   {
     mInputBufPtrs.Add(nullptr); //will be set in callback
   }
-    
+
+  // AppProcess's AttachBuffers(kInput, ...) always asks for MaxNChannels(kInput) buffers,
+  // even when the stream opened with fewer inputs (or none, after the 0-input retry above).
+  // Pad the rest of the list with a zeroed buffer so the plug sees silence on those channels,
+  // per iPlug2's unconnected-input contract, instead of AttachBuffers walking off the list.
+  {
+    const uint32_t plugInputChans = static_cast<uint32_t>(mIPlug->MaxNChannels(ERoute::kInput));
+    if (mOpenedInputChans < plugInputChans)
+    {
+      mSilentInputBuf.assign(APP_SIGNAL_VECTOR_SIZE, 0.0);
+      for (uint32_t i = mOpenedInputChans; i < plugInputChans; i++)
+        mInputBufPtrs.Add(mSilentInputBuf.data());
+    }
+  }
+
   for (uint32_t i = 0; i < mOpenedOutputChans; i++)
   {
     mOutputBufPtrs.Add(nullptr); //will be set in callback
   }
-    
+
+  // Same story on the output side: AttachBuffers(kOutput, ...) always asks for
+  // MaxNChannels(kOutput) buffers. Pad the rest of the list with a scratch buffer the plug
+  // can write into; nothing reads it back, since the callback only copies the first
+  // mOpenedOutputChans entries to the device stream.
+  {
+    const uint32_t plugOutputChans = static_cast<uint32_t>(mIPlug->MaxNChannels(ERoute::kOutput));
+    if (mOpenedOutputChans < plugOutputChans)
+    {
+      mDiscardOutputBuf.resize(APP_SIGNAL_VECTOR_SIZE);
+      for (uint32_t i = mOpenedOutputChans; i < plugOutputChans; i++)
+        mOutputBufPtrs.Add(mDiscardOutputBuf.data());
+    }
+  }
+
   if (mDAC->startStream() != RTAUDIO_NO_ERROR)
   {
     DBGMSG("Error starting stream: %s\n", mDAC->getErrorText().c_str());

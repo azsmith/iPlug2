@@ -254,6 +254,13 @@ private:
   
   WDL_PtrList<double> mInputBufPtrs;
   WDL_PtrList<double> mOutputBufPtrs;
+  // AppProcess attaches MaxNChannels(kInput/kOutput) buffers unconditionally, regardless of
+  // how many channels the stream actually opened (e.g. an input device open failure falls
+  // back to a 0-input retry). These back the pointer list entries beyond what the stream
+  // opened, so the plug reads silence on unopened inputs and writes to a buffer nothing
+  // reads on unopened outputs, instead of AttachBuffers walking off the end of a short list.
+  std::vector<double> mSilentInputBuf;
+  std::vector<double> mDiscardOutputBuf;
   
   friend class IPlugAPP;
 };
