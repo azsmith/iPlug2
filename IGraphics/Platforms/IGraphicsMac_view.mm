@@ -612,6 +612,8 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink, const CVTimeSt
 
 - (void) viewDidChangeEffectiveAppearance
 {
+  if (!mGraphics) return; // AppKit can deliver this after teardown
+
   if (@available(macOS 10.14, *)) {
     BOOL isDarkMode = [[[self effectiveAppearance] name] isEqualToString: (NSAppearanceNameDarkAqua)];
     mGraphics->OnAppearanceChanged(isDarkMode ? EUIAppearance::Dark : EUIAppearance::Light);
@@ -672,6 +674,8 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink, const CVTimeSt
 
 - (void) viewDidChangeBackingProperties:(NSNotification*) pNotification
 {
+  if (!mGraphics) return; // AppKit can deliver this after teardown
+
   NSWindow* pWindow = [self window];
   
   if (!pWindow)
@@ -726,6 +730,8 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink, const CVTimeSt
 
 - (void) render
 {
+  if (!mGraphics) return; // a queued timer/display-link tick can land after teardown
+
   mDirtyRects.Clear();
   
   if (mGraphics->IsDirty(mDirtyRects))
@@ -917,6 +923,8 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink, const CVTimeSt
 
 - (void) keyDown: (NSEvent*) pEvent
 {
+  if (!mGraphics) return; // torn down; nothing to route the key to
+
   int flag = 0;
   int code = MacKeyEventToVK(pEvent, flag);
   NSString *s = [pEvent charactersIgnoringModifiers];
@@ -948,6 +956,8 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink, const CVTimeSt
 
 - (void) keyUp: (NSEvent*) pEvent
 {
+  if (!mGraphics) return; // torn down; nothing to route the key to
+
   int flag = 0;
   int code = MacKeyEventToVK(pEvent, flag);
   NSString *s = [pEvent charactersIgnoringModifiers];
@@ -1129,18 +1139,38 @@ static void MakeCursorFromName(NSCursor*& cursor, const char *name)
 
 - (void) removeFromSuperview
 {
+  // mGraphics is already nil if we're re-entering via IGraphicsMac::CloseWindow (it clears
+  // the ivar before calling back down to us). Just finish the AppKit teardown in that case.
+  if (!mGraphics)
+  {
+    [super removeFromSuperview];
+    return;
+  }
+
   if (mTextFieldView)
     [self endUserInput ];
-  
-  mGraphics->SetPlatformContext(nullptr);
-    
+
+  // Take a local copy and clear the ivar first, so nothing else (including the delegate call
+  // below, which re-enters this method) can see a graphics object that's mid-teardown. Retain
+  // self across the teardown: if the host holds no other reference, CloseWindow's [pView
+  // autorelease] would otherwise let us be freed while this frame is still running.
+  IGraphicsMac* pGraphics = mGraphics;
+  mGraphics = nullptr;
+  [self retain];
+
+  pGraphics->SetPlatformContext(nullptr);
+
   //For some APIs (AUv2) this is where we know about the window being closed, close via delegate
-  mGraphics->GetDelegate()->CloseWindow();
+  pGraphics->GetDelegate()->CloseWindow();
   [super removeFromSuperview];
+
+  [self autorelease];
 }
 
 - (void) controlTextDidEndEditing: (NSNotification*) aNotification
 {
+  if (!mGraphics) return; // torn down before the field's editing session ended
+
   char* txt = (char*)[[mTextFieldView stringValue] UTF8String];
 
   mGraphics->SetControlValueAfterTextEdit(txt);
@@ -1302,7 +1332,9 @@ static void MakeCursorFromName(NSCursor*& cursor, const char *name)
 
 - (NSString*) view: (NSView*) pView stringForToolTip: (NSToolTipTag) tag point: (NSPoint) point userData: (void*) pData
 {
-  int c = mGraphics ? GetMouseOver(mGraphics) : -1;
+  if (!mGraphics) return @""; // guard the whole method, not just the GetMouseOver call
+
+  int c = GetMouseOver(mGraphics);
   if (c < 0) return @"";
 
   const char* tooltip = mGraphics->GetControl(c)->GetTooltip();
@@ -1311,6 +1343,8 @@ static void MakeCursorFromName(NSCursor*& cursor, const char *name)
 
 - (void) registerToolTip: (IRECT&) bounds
 {
+  if (!mGraphics) return;
+
   [self addToolTipRect: ToNSRect(mGraphics, bounds) owner: self userData: nil];
 }
 
@@ -1326,6 +1360,8 @@ static void MakeCursorFromName(NSCursor*& cursor, const char *name)
 
 - (BOOL) performDragOperation: (id<NSDraggingInfo>) sender
 {
+  if (!mGraphics) return NO; // torn down; nothing to drop onto
+
   NSPasteboard* pPasteBoard = [sender draggingPasteboard];
 
   if ([[pPasteBoard types] containsObject:NSFilenamesPboardType])

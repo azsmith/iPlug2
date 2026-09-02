@@ -146,11 +146,17 @@ void IGraphicsMac::CloseWindow()
     eglTerminate([pView getEGLDisplay]);
 #endif
 
+    // Detach the platform context and null the view's back pointer before touching anything
+    // else, so a re-entrant -removeFromSuperview (called below, or by the host later) sees
+    // mGraphics == nil and takes the inert path instead of calling back in here.
+    SetPlatformContext(nullptr);
+    pView->mGraphics = nullptr;
+
     [pView removeAllToolTips];
     [pView killTimer];
     [pView removeFromSuperview];
-    [pView release];
-      
+    [pView autorelease]; // defer the free: we may still be running inside a call frame owned by pView
+
     mView = nullptr;
     OnViewDestroyed();
   }
