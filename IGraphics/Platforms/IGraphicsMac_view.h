@@ -123,7 +123,10 @@ using namespace igraphics;
   CVDisplayLinkRef mDisplayLink;
   dispatch_source_t mDisplaySource;
   NSTimer* mTimer;
-  
+  BOOL mFrameObserverRegistered;
+  BOOL mRenderedSinceTimerStart;
+  unsigned long mRenderTickCount;
+
   NSTrackingArea* mTrackingArea;
   IGRAPHICS_TEXTFIELD* mTextFieldView;
   NSCursor* mMoveCursor;

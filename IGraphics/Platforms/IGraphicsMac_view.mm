@@ -9,6 +9,7 @@
 */
 
 #import <QuartzCore/QuartzCore.h>
+#import <os/log.h>
 
 #if defined IGRAPHICS_METAL || defined IGRAPHICS_GLES2 || defined IGRAPHICS_GLES3
 #import <Metal/Metal.h>
@@ -23,6 +24,16 @@
 
 using namespace iplug;
 using namespace igraphics;
+
+// Diagnostics for the "dead editor after Logic session restore" bug (weeks-long, recurring).
+// Cheap, off the audio thread, left in the shipping build on purpose so the next occurrence
+// is diagnosable. Pull after the fact with:
+//   log show --predicate 'subsystem == "com.plasticfactory.wobbles" AND category == "editor"' --style compact --last 30m
+static os_log_t WobblesEditorLog(void)
+{
+  static os_log_t sLog = os_log_create("com.plasticfactory.wobbles", "editor");
+  return sLog;
+}
 
 static int MacKeyCodeToVK(int code)
 {
@@ -395,11 +406,17 @@ extern StaticStorage<CoreTextFontDescriptor> sFontDescriptorCache;
 {
   TRACE
 
+  os_log(WobblesEditorLog(), "initWithFrame thread=%{public}s main=%d",
+         [[NSThread currentThread] description].UTF8String, (int) [NSThread isMainThread]);
+
   mGraphics = pGraphics;
   NSRect r = NSMakeRect(0.f, 0.f, (float) pGraphics->WindowWidth(), (float) pGraphics->WindowHeight());
   self = [super initWithFrame:r];
-  
+
   mMouseOutDuringDrag = false;
+  mFrameObserverRegistered = NO;
+  mRenderedSinceTimerStart = NO;
+  mRenderTickCount = 0;
 
   self.layer.frame = r;
   self.wantsLayer = YES;
@@ -500,10 +517,11 @@ extern StaticStorage<CoreTextFontDescriptor> sFontDescriptorCache;
   #endif
 
 
-  #if !defined IGRAPHICS_GL2 && !defined IGRAPHICS_GL3
-  [self setTimer];
-  #endif
-  
+  // Redraw timer is deliberately NOT started here. Starting it at construction binds its
+  // life (and, worse, its run loop) to whatever thread/run loop happens to be constructing
+  // the view, which may not be the main thread and may not yet be pumping. It is started in
+  // -viewDidMoveToWindow once the view is actually on-screen; see setTimer/killTimer.
+
   return self;
 }
 
@@ -535,9 +553,32 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink, const CVTimeSt
   [self render];
 }
 
+// Schedules the redraw timer. MUST run on the main thread: the timer is added to the main
+// run loop explicitly (never "currentRunLoop"), because a host is free to construct/re-attach
+// this view from a background thread on session restore, and a timer added to a background
+// run loop that never spins never fires -> dead, unpainted UI until something else forces a
+// repaint (the bypass power-cycle rebuilds the view, which is why that "fixes" it).
+// Idempotent: never creates a second live timer/display link.
 - (void) setTimer
 {
+  if (![NSThread isMainThread])
+  {
+    os_log(WobblesEditorLog(), "setTimer called off main thread (%{public}s), hopping to main queue",
+           [[NSThread currentThread] description].UTF8String);
+    // Matches the existing convention in this file (see the CVDisplayLink event handler
+    // below): this file is built without ARC, and this object already outlives its timer
+    // lifecycle callbacks in every other path here, so a plain capture is consistent.
+    dispatch_async(dispatch_get_main_queue(), ^{
+      [self setTimer];
+    });
+    return;
+  }
+
 #ifdef IGRAPHICS_CVDISPLAYLINK
+  if (mDisplayLink != nil)
+    return; // already running
+
+  mRenderedSinceTimerStart = NO;
   mDisplaySource = dispatch_source_create(DISPATCH_SOURCE_TYPE_DATA_ADD, 0, 0, dispatch_get_main_queue());
   dispatch_source_set_event_handler(mDisplaySource, ^(){
     [self render];
@@ -547,7 +588,7 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink, const CVTimeSt
   CVReturn cvReturn;
 
   cvReturn = CVDisplayLinkCreateWithActiveCGDisplays(&mDisplayLink);
-  
+
   assert(cvReturn == kCVReturnSuccess);
 
   cvReturn = CVDisplayLinkSetOutputCallback(mDisplayLink, &displayLinkCallback, (void*) mDisplaySource);
@@ -558,33 +599,49 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink, const CVTimeSt
   CGLPixelFormatObj cglPixelFormat = [[self pixelFormat] CGLPixelFormatObj];
   CVDisplayLinkSetCurrentCGDisplayFromOpenGLContext(mDisplayLink, cglContext, cglPixelFormat);
   #endif
-  
+
   CGDirectDisplayID viewDisplayID =
       (CGDirectDisplayID) [self.window.screen.deviceDescription[@"NSScreenNumber"] unsignedIntegerValue];;
 
   cvReturn = CVDisplayLinkSetCurrentCGDisplay(mDisplayLink, viewDisplayID);
 
   assert(cvReturn == kCVReturnSuccess);
-  
+
   CVDisplayLinkStart(mDisplayLink);
+  os_log(WobblesEditorLog(), "setTimer started CVDisplayLink main=%d", (int) [NSThread isMainThread]);
 #else
+  if (mTimer != nullptr)
+    return; // already running
+
+  mRenderedSinceTimerStart = NO;
   double sec = 1.0 / (double) mGraphics->FPS();
   mTimer = [NSTimer timerWithTimeInterval:sec target:self selector:@selector(onTimer:) userInfo:nil repeats:YES];
-  [[NSRunLoop currentRunLoop] addTimer: mTimer forMode: (NSString*) kCFRunLoopCommonModes];
+  [[NSRunLoop mainRunLoop] addTimer: mTimer forMode: (NSString*) kCFRunLoopCommonModes];
+  os_log(WobblesEditorLog(), "setTimer started NSTimer thread=%{public}s main=%d fps=%d",
+         [[NSThread currentThread] description].UTF8String, (int) [NSThread isMainThread], mGraphics ? mGraphics->FPS() : -1);
 #endif
 }
 
+// Safe to call with no timer running (IGraphicsMac::CloseWindow always calls this on teardown,
+// whether or not the view was ever moved into a window).
 - (void) killTimer
 {
 #ifdef IGRAPHICS_CVDISPLAYLINK
-  CVDisplayLinkStop(mDisplayLink);
-  dispatch_source_cancel(mDisplaySource);
-  CVDisplayLinkRelease(mDisplayLink);
-  mDisplayLink = nil;
+  if (mDisplayLink != nil)
+  {
+    CVDisplayLinkStop(mDisplayLink);
+    dispatch_source_cancel(mDisplaySource);
+    CVDisplayLinkRelease(mDisplayLink);
+    mDisplayLink = nil;
+  }
 #else
-  [mTimer invalidate];
-  mTimer = nullptr;
+  if (mTimer != nullptr)
+  {
+    [mTimer invalidate];
+    mTimer = nullptr;
+  }
 #endif
+  os_log(WobblesEditorLog(), "killTimer main=%d", (int) [NSThread isMainThread]);
 }
 
 - (void) dealloc
@@ -630,34 +687,44 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink, const CVTimeSt
   return YES;
 }
 
+// The redraw timer's life is bound to the view actually being in a window, not to
+// construction (see -initWithIGraphics / -setTimer). This is also where we recover a view
+// that was built off-thread and/or before its window was sized: force the Metal drawable to
+// match the current frame/scale and mark every control dirty so the next render paints the
+// whole UI, instead of leaving a blank surface that only a bypass power-cycle would ever
+// refresh.
 - (void) viewDidMoveToWindow
 {
   NSWindow* pWindow = [self window];
-  
+
   if (pWindow)
   {
     [pWindow makeFirstResponder: self];
     [pWindow setAcceptsMouseMovedEvents: YES];
-    
+
     CGFloat newScale = [pWindow backingScaleFactor];
 
     if (mGraphics)
-      mGraphics->SetScreenScale(newScale);
-    
-    #if defined IGRAPHICS_METAL || defined IGRAPHICS_GLES2 || defined IGRAPHICS_GLES3
-    [[NSNotificationCenter defaultCenter] addObserver:self
-                                             selector:@selector(frameDidChange:)
-                                                 name:NSViewFrameDidChangeNotification
-                                               object:self];
-    #endif
-    
-    #if defined IGRAPHICS_GL2 || defined IGRAPHICS_GL3
-    [[NSNotificationCenter defaultCenter] addObserver:self
-                                             selector:@selector(frameDidChange:)
-                                                 name:NSViewGlobalFrameDidChangeNotification
-                                               object:self];
-    #endif
-    
+      mGraphics->SetScreenScale(newScale); // also calls SetAllControlsDirty()
+
+    if (!mFrameObserverRegistered)
+    {
+      #if defined IGRAPHICS_METAL || defined IGRAPHICS_GLES2 || defined IGRAPHICS_GLES3
+      [[NSNotificationCenter defaultCenter] addObserver:self
+                                               selector:@selector(frameDidChange:)
+                                                   name:NSViewFrameDidChangeNotification
+                                                 object:self];
+      #endif
+
+      #if defined IGRAPHICS_GL2 || defined IGRAPHICS_GL3
+      [[NSNotificationCenter defaultCenter] addObserver:self
+                                               selector:@selector(frameDidChange:)
+                                                   name:NSViewGlobalFrameDidChangeNotification
+                                                 object:self];
+      #endif
+      mFrameObserverRegistered = YES;
+    }
+
 //    [[NSNotificationCenter defaultCenter] addObserver:self
 //                                             selector:@selector(windowResized:) name:NSWindowDidEndLiveResizeNotification
 //                                               object:pWindow];
@@ -669,6 +736,42 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink, const CVTimeSt
 //    [[NSNotificationCenter defaultCenter] addObserver:self
 //                                             selector:@selector(windowFullscreened:) name:NSWindowDidExitFullScreenNotification
 //                                               object:pWindow];
+
+    CGSize drawableSize = CGSizeZero;
+    #if defined IGRAPHICS_METAL || defined IGRAPHICS_GLES2 || defined IGRAPHICS_GLES3
+    // Don't rely solely on NSViewFrameDidChangeNotification to size the drawable: the
+    // observer above may not have existed yet the first time this view's frame was set
+    // (e.g. PlatformResize during the SetScreenScale call just above, on the very first
+    // arrival), which would leave a zero/stale-sized CAMetalLayer drawable and nothing to
+    // ever repaint it. Set it explicitly, every time, from the ground truth (window scale +
+    // current frame).
+    CAMetalLayer* mtlLayer = (CAMetalLayer*) self.layer;
+    if ([mtlLayer isKindOfClass:[CAMetalLayer class]])
+    {
+      mtlLayer.contentsScale = newScale;
+      drawableSize = CGSizeMake(self.frame.size.width * newScale, self.frame.size.height * newScale);
+      [mtlLayer setDrawableSize:drawableSize];
+    }
+    #endif
+
+    if (mGraphics)
+      mGraphics->SetAllControlsDirty(); // belt-and-braces on top of SetScreenScale above
+
+    os_log(WobblesEditorLog(),
+           "viewDidMoveToWindow window=1 scale=%.2f frame=(%.1f,%.1f) drawable=(%.1f,%.1f)",
+           (double) newScale, (double) self.frame.size.width, (double) self.frame.size.height,
+           (double) drawableSize.width, (double) drawableSize.height);
+
+    // Start (or confirm) the redraw timer now that the view is genuinely on-screen, then
+    // force an immediate render rather than waiting for the first tick, so a view that was
+    // built blank paints on arrival.
+    [self setTimer];
+    [self render];
+  }
+  else
+  {
+    os_log(WobblesEditorLog(), "viewDidMoveToWindow window=0, stopping timer");
+    [self killTimer];
   }
 }
 
@@ -732,12 +835,16 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink, const CVTimeSt
 {
   if (!mGraphics) return; // a queued timer/display-link tick can land after teardown
 
+  mRenderTickCount++;
+  if ((mRenderTickCount % 300) == 0)
+    os_log(WobblesEditorLog(), "render tick=%lu", mRenderTickCount);
+
   mDirtyRects.Clear();
-  
+
   if (mGraphics->IsDirty(mDirtyRects))
   {
     mGraphics->SetAllControlsClean();
-      
+
     #if defined IGRAPHICS_CPU
       for (int i = 0; i < mDirtyRects.Size(); i++)
         [self setNeedsDisplayInRect:ToNSRect(mGraphics, mDirtyRects.Get(i))];
@@ -747,6 +854,12 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink, const CVTimeSt
     mGraphics->Draw(mDirtyRects);
     [self swapBuffers]; // No-op for Metal
     #endif
+
+    if (!mRenderedSinceTimerStart)
+    {
+      mRenderedSinceTimerStart = YES;
+      os_log(WobblesEditorLog(), "first successful render after timer start, tick=%lu", mRenderTickCount);
+    }
   }
 }
 
