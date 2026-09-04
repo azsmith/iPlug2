@@ -579,6 +579,15 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink, const CVTimeSt
     return;
   }
 
+  // No graphics means the view has been torn down (IGraphicsMac::CloseWindow nulls this)
+  // and there is nothing to render, so there is nothing to schedule. This guard matters
+  // because the timer is now started from -viewDidMoveToWindow rather than from init: a
+  // host that re-parents a view AFTER teardown fires that callback on a dead view, and
+  // the FPS() read below would dereference null. Caught by tools/au_view_lifecycle_harness
+  // (the `reparent` scenario) the first time it ran under ctest.
+  if (!mGraphics)
+    return;
+
 #ifdef IGRAPHICS_CVDISPLAYLINK
   if (mDisplayLink != nil)
     return; // already running
