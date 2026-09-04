@@ -565,11 +565,16 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink, const CVTimeSt
   {
     os_log(WobblesEditorLog(), "setTimer called off main thread (%{public}s), hopping to main queue",
            [[NSThread currentThread] description].UTF8String);
-    // Matches the existing convention in this file (see the CVDisplayLink event handler
-    // below): this file is built without ARC, and this object already outlives its timer
-    // lifecycle callbacks in every other path here, so a plain capture is consistent.
+    // Retain across the hop. This file is built without ARC, so a bare block capture does
+    // not keep the view alive; teardown between this call and the block running would then
+    // message a freed view. This same class already carries a teardown use-after-free fix
+    // (see -removeFromSuperview), so the narrow window is not theoretical. mGraphics is
+    // nulled on teardown, which is what tells the block the view is inert by then.
+    [self retain];
     dispatch_async(dispatch_get_main_queue(), ^{
-      [self setTimer];
+      if (self->mGraphics)
+        [self setTimer];
+      [self release];
     });
     return;
   }
