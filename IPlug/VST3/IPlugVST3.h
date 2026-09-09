@@ -17,6 +17,7 @@
  * @copydoc IPlugVST3
  */
 
+#include <atomic>
 #include <vector>
 
 #undef stricmp
@@ -62,6 +63,7 @@ public:
   void InformHostOfPresetChange() override {}
   void InformHostOfParameterDetailsChange() override;
   bool EditorResize(int viewWidth, int viewHeight) override;
+  void OnTimer(Timer& t) override;
 
   // IEditorDelegate
   void DirtyParametersFromUI() override;
@@ -168,6 +170,7 @@ public:
 
 private:
   ViewType* mView;
+  std::atomic<bool> mLatencyChangePending {false};
 };
 
 IPlugVST3* MakePlug(const InstanceInfo& info);
