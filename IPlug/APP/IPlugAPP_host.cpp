@@ -643,8 +643,14 @@ void IPlugAPPHost::CloseAudio()
     {
       mAudioEnding = true;
     
-      while (!mAudioDone)
+      // A disconnected/unclocked stream cannot acknowledge a fade. Stop
+      // waiting for that handshake after one second, then ask the driver to
+      // abort. Final Windows process shutdown also bounds the driver call.
+      int waitedMs = 0;
+      while (!mAudioDone.load(std::memory_order_acquire) && waitedMs < 1000) {
         Sleep(10);
+        waitedMs += 10;
+      }
       
       mDAC->abortStream();
     }
