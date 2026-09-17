@@ -11,6 +11,7 @@
 #import <AVFoundation/AVFoundation.h>
 #import <CoreAudioKit/AUViewController.h>
 #include "BufferedAudioBus.hpp"
+#include <atomic>
 
 #import "IPlugAUAudioUnit.h"
 #include "IPlugAUv3.h"
@@ -47,6 +48,8 @@ static AUAudioUnitPreset* NewAUPreset(NSInteger number, NSString* pName)
   AUParameterObserverToken mUIUpdateParamObserverToken;
   NSArray<AUAudioUnitPreset*>* mPresets;
   AUAudioUnitPreset* mCurrentPreset;
+  // Bumped by setFullState; a preset change queued before a state restore must not undo it.
+  std::atomic<uint64_t> mStateGeneration;
   NSInteger mCurrentFactoryPresetIndex;
 }
 
@@ -649,7 +652,10 @@ static AUAudioUnitPreset* NewAUPreset(NSInteger number, NSString* pName)
     return;
   }
 
+  const uint64_t generation = mStateGeneration.load();
   dispatch_async(dispatch_get_main_queue(), ^{
+    if (self->mStateGeneration.load() != generation)
+      return;
     if (currentPreset.number >= 0)
     {
       // factory preset
@@ -764,6 +770,7 @@ static AUAudioUnitPreset* NewAUPreset(NSInteger number, NSString* pName)
   chunk.PutBytes([pData bytes], static_cast<int>([pData length]));
   int pos = 0;
 //  IByteChunk::GetIPlugVerFromChunk(chunk, pos);
+  mStateGeneration.fetch_add(1);
   mPlug->UnserializeState(chunk, pos);
 #endif
   
