@@ -196,7 +196,7 @@ protected:
   static void PutStrInDict(CFMutableDictionaryRef pDict, const char* key, const char* value);
   static void PutDataInDict(CFMutableDictionaryRef pDict, const char* key, IByteChunk* pChunk);
   static bool GetNumberFromDict(CFDictionaryRef pDict, const char* key, void* pNumber, CFNumberType type);
-  static bool GetStrFromDict(CFDictionaryRef pDict, const char* key, char* value);
+  static bool GetStrFromDict(CFDictionaryRef pDict, const char* key, WDL_String& value);
   static bool GetDataFromDict(CFDictionaryRef pDict, const char* key, IByteChunk* pChunk);
 
 #pragma mark - Specialist Use
@@ -225,6 +225,8 @@ private:
   AUMIDIOutputCallbackStruct mMidiCallback;
   AudioTimeStamp mLastRenderTimeStamp;
   WDL_String mTrackName;
+  // Name of a host (user) preset, presetNumber < 0; empty while a factory preset is current.
+  WDL_String mUserPresetName;
   template <class Plug, bool DoesMIDIIn>
   friend class IPlugAUFactory;
 };
