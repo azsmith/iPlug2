@@ -173,8 +173,14 @@ extern StaticStorage<CoreTextFontDescriptor> sFontDescriptorCache;
   if (self.presentingViewController && self.tableView != nil)
   {
     CGSize tempSize = self.presentingViewController.view.bounds.size;
+    const CGFloat maxHeight = tempSize.height;
     tempSize.width = 300;
     CGSize size = [self.tableView sizeThatFits:tempSize];
+    // Asking for the full content height on a menu taller than the presenter used to hand
+    // UIKit a size it cannot honour: the popover was clipped at the screen edge and the rows
+    // past it became unreachable. Cap the height so the popover fits and the table scrolls.
+    if (size.height > maxHeight)
+      size.height = maxHeight;
     return size;
   } else {
     return [super preferredContentSize];
