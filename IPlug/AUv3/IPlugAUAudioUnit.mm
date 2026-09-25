@@ -577,10 +577,18 @@ static AUAudioUnitPreset* NewAUPreset(NSInteger number, NSString* pName)
     
     for (auto busIdx = 0; busIdx < inputBuses->GetSize(); busIdx++)
     {
-      err = inputBuses->Get(busIdx)->pullInput(&pullFlags, timestamp, frameCount, busIdx, pullInputBlock);
+      BufferedInputBus* bus = inputBuses->Get(busIdx);
+      // An unconnected input is silence, not a failed render: an instrument with an optional
+      // input (or a host that gives no pull block at all) must still be rendered. Returning the
+      // error here meant the plugin was never processed (Lunchbox eval S09).
+      if (bus->pullInput(&pullFlags, timestamp, frameCount, busIdx, pullInputBlock) != noErr)
+      {
+        bus->prepareInputBufferList(frameCount);
+        AudioBufferList* abl = bus->mutableAudioBufferList;
+        for (UInt32 i = 0; i < abl->mNumberBuffers; ++i)
+          if (abl->mBuffers[i].mData) memset(abl->mBuffers[i].mData, 0, abl->mBuffers[i].mDataByteSize);
+      }
     }
-
-    if (err != 0) { return err; }
     
     AudioBufferList* pInAudioBufferList = nil;
     
