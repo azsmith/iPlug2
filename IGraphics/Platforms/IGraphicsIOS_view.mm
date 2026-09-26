@@ -74,6 +74,15 @@ extern StaticStorage<CoreTextFontDescriptor> sFontDescriptorCache;
   [self.view addSubview:self.tableView];
 }
 
+// Open long menus on the current item rather than at the top.
+- (void) viewWillAppear:(BOOL)animated
+{
+  [super viewWillAppear:animated];
+  const int chosen = mMenu->GetChosenItemIdx();
+  if (chosen >= 0 && chosen < (int) [self.items count])
+    [self.tableView scrollToRowAtIndexPath:[NSIndexPath indexPathForRow:chosen inSection:0] atScrollPosition:UITableViewScrollPositionMiddle animated:NO];
+}
+
 - (id) initWithIPopupMenuAndIGraphics: (IPopupMenu*) pMenu : (IGraphicsIOS*) pGraphics
 {
   self = [super init];
