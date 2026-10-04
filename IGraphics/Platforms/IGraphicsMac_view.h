@@ -132,6 +132,10 @@ using namespace igraphics;
   NSCursor* mMoveCursor;
   float mPrevX, mPrevY;
   bool mMouseOutDuringDrag;
+  // Screen-position error of this view's window, measured at the last mouse-down; see
+  // IGraphicsMac_popupanchor.h and -recordPopupAnchorCorrection:.
+  NSPoint mPopupAnchorCorrection;
+  NSTimeInterval mPopupAnchorCorrectionTime;
   IRECTList mDirtyRects;
   IColorPickerHandlerFunc mColorPickerFunc;
 
@@ -159,6 +163,7 @@ using namespace igraphics;
 - (void) getMouseXY: (NSEvent*) pEvent : (float&) x : (float&) y;
 - (IMouseInfo) getMouseLeft: (NSEvent*) pEvent;
 - (IMouseInfo) getMouseRight: (NSEvent*) pEvent;
+- (void) recordPopupAnchorCorrection: (NSEvent*) pEvent;
 - (void) updateTrackingAreas;
 - (void) mouseEntered:(NSEvent*) pEvent;
 - (void) mouseExited:(NSEvent*) pEvent;
