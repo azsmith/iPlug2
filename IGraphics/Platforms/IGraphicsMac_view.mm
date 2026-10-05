@@ -18,6 +18,7 @@
 #include "wdlutf8.h"
 
 #import "IGraphicsMac_view.h"
+#include "IGraphicsMac_popupanchor.h"
 #include "IControl.h"
 #include "IPlugParameter.h"
 #include "IPlugLogger.h"
@@ -395,10 +396,12 @@ extern StaticStorage<CoreTextFontDescriptor> sFontDescriptorCache;
 - (CALayer *)makeBackingLayer
 {
   // CAMetalLayer is correct for both Metal and GLES - ANGLE uses Metal backend on macOS
+  // NB: this file is not ARC; the caller retains, so the layer must be autoreleased
+  // or it is stranded (with its drawable pool) every time the window closes
 #if defined IGRAPHICS_METAL || defined IGRAPHICS_GLES2 || defined IGRAPHICS_GLES3
-  return [[CAMetalLayer alloc] init];
+  return [[[CAMetalLayer alloc] init] autorelease];
 #else
-  return [[CALayer alloc] init];
+  return [[[CALayer alloc] init] autorelease];
 #endif
 }
 
@@ -427,7 +430,7 @@ extern StaticStorage<CoreTextFontDescriptor> sFontDescriptorCache;
   #if defined IGRAPHICS_METAL || defined IGRAPHICS_GLES2 || defined IGRAPHICS_GLES3
   CAMetalLayer* mtlLayer = (CAMetalLayer*) self.layer;
   [mtlLayer setPixelFormat:MTLPixelFormatBGRA8Unorm];
-  mtlLayer.device = MTLCreateSystemDefaultDevice();
+  mtlLayer.device = [MTLCreateSystemDefaultDevice() autorelease]; // Create-rule +1, property assignment retains
   mtlLayer.framebufferOnly = YES;
   #elif defined IGRAPHICS_GL2 || defined IGRAPHICS_GL3
   NSOpenGLPixelFormatAttribute profile = NSOpenGLProfileVersionLegacy;
@@ -950,9 +953,29 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink, const CVTimeSt
   }
 }
 
+// Out-of-process AUv2 (Logic's AUHostingService) gives this view a stand-in NSWindow whose screen
+// geometry the host keeps in sync, and it can go stale: collapsing Logic's plugin header moves the
+// view without the stand-in following. Mouse events stay right (they are view-local), but anything
+// placed via window-to-screen conversion, i.e. popup menus, lands offset. Measure the error here,
+// while the real cursor ([NSEvent mouseLocation], from the window server) and the click are the
+// same point. In process the error is zero.
+- (void) recordPopupAnchorCorrection: (NSEvent*) pEvent
+{
+  NSWindow* pWindow = [self window];
+  if (!pWindow)
+    return;
+
+  const NSPoint cursor = [NSEvent mouseLocation];
+  const NSPoint clickViaWindow = [pWindow convertPointToScreen:[pEvent locationInWindow]];
+  const IGMacScreenPoint correction = IGMacPopupAnchorCorrection({cursor.x, cursor.y}, {clickViaWindow.x, clickViaWindow.y});
+  mPopupAnchorCorrection = NSMakePoint(correction.x, correction.y);
+  mPopupAnchorCorrectionTime = [NSDate timeIntervalSinceReferenceDate];
+}
+
 - (void) mouseDown: (NSEvent*) pEvent
 {
   IMouseInfo info = [self getMouseLeft:pEvent];
+  [self recordPopupAnchorCorrection:pEvent];
   if (mGraphics)
   {
     if (([pEvent clickCount] - 1) % 2)
@@ -1001,6 +1024,7 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink, const CVTimeSt
 - (void) rightMouseDown: (NSEvent*) pEvent
 {
   IMouseInfo info = [self getMouseRight:pEvent];
+  [self recordPopupAnchorCorrection:pEvent];
   if (mGraphics)
   {
     if (([pEvent clickCount] - 1) % 2)
@@ -1326,7 +1350,19 @@ static void MakeCursorFromName(NSCursor*& cursor, const char *name)
     wp = {bounds.origin.x, bounds.origin.y};
   }
   
-  [pNSMenu popUpMenuPositioningItem:pSelectedItem atLocation:wp inView:self];
+  // Anchor in screen coordinates, corrected by the error measured at the click that opened the
+  // menu (see -recordPopupAnchorCorrection:). With no recent click this is the old placement.
+  NSWindow* pWindow = [self window];
+  if (pWindow)
+  {
+    const NSPoint viaWindow = [pWindow convertPointToScreen:[self convertPoint:wp toView:nil]];
+    const double age = mPopupAnchorCorrectionTime > 0.0 ? [NSDate timeIntervalSinceReferenceDate] - mPopupAnchorCorrectionTime : -1.0;
+    const IGMacScreenPoint anchor = IGMacCorrectedPopupAnchor({viaWindow.x, viaWindow.y},
+                                                              {mPopupAnchorCorrection.x, mPopupAnchorCorrection.y}, age);
+    [pNSMenu popUpMenuPositioningItem:pSelectedItem atLocation:NSMakePoint(anchor.x, anchor.y) inView:nil];
+  }
+  else
+    [pNSMenu popUpMenuPositioningItem:pSelectedItem atLocation:wp inView:self];
   
   NSMenuItem* pChosenItem = [pDummyView menuItem];
   NSMenu* pChosenMenu = [pChosenItem menu];
