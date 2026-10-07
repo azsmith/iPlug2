@@ -12,6 +12,7 @@
 #import <CoreAudioKit/AUViewController.h>
 #include "BufferedAudioBus.hpp"
 #include <atomic>
+#include <mutex>
 
 #import "IPlugAUAudioUnit.h"
 #include "IPlugAUv3.h"
@@ -50,6 +51,10 @@ static AUAudioUnitPreset* NewAUPreset(NSInteger number, NSString* pName)
   AUAudioUnitPreset* mCurrentPreset;
   // Bumped by setFullState; a preset change queued before a state restore must not undo it.
   std::atomic<uint64_t> mStateGeneration;
+  // Held by that preset block across check + restore (not its tree write: observers fire
+  // synchronously), and by setFullState across bump + unserialize: otherwise a restore landing just
+  // after the check interleaves with RestorePreset and some params keep the preset's values.
+  std::mutex mStateMutex;
   NSInteger mCurrentFactoryPresetIndex;
 }
 
@@ -662,8 +667,6 @@ static AUAudioUnitPreset* NewAUPreset(NSInteger number, NSString* pName)
 
   const uint64_t generation = mStateGeneration.load();
   dispatch_async(dispatch_get_main_queue(), ^{
-    if (self->mStateGeneration.load() != generation)
-      return;
     if (currentPreset.number >= 0)
     {
       // factory preset
@@ -671,11 +674,20 @@ static AUAudioUnitPreset* NewAUPreset(NSInteger number, NSString* pName)
       {
         if (currentPreset.number == pFactoryPreset.number)
         {
-          self->mPlug->RestorePreset(int(pFactoryPreset.number));
-          self->mCurrentPreset = pFactoryPreset;
-          
+          {
+            std::lock_guard<std::mutex> lock(self->mStateMutex);
+            if (self->mStateGeneration.load() != generation)
+              return;
+            self->mPlug->RestorePreset(int(pFactoryPreset.number));
+            self->mCurrentPreset = pFactoryPreset;
+          }
+
+          // Unlocked: tree observers fire synchronously. A restore that lands mid-loop stops it; the
+          // value is read at write time, so a write racing that restore carries the restored value.
           for (int paramIdx = 0; paramIdx < self->mPlug->NParams(); paramIdx++)
           {
+            if (self->mStateGeneration.load() != generation)
+              break;
             AUParameter* parameterToChange = [self->mParameterTree parameterWithAddress:self->mPlug->GetParamAddress(paramIdx)];
             parameterToChange.value = self->mPlug->GetParam(paramIdx)->Value();
           }
@@ -686,7 +698,9 @@ static AUAudioUnitPreset* NewAUPreset(NSInteger number, NSString* pName)
     }
     else if (currentPreset.name != nil)
     {
-      self->mCurrentPreset = currentPreset;
+      std::lock_guard<std::mutex> lock(self->mStateMutex);
+      if (self->mStateGeneration.load() == generation)
+        self->mCurrentPreset = currentPreset;
     }
   });
 }
@@ -778,8 +792,11 @@ static AUAudioUnitPreset* NewAUPreset(NSInteger number, NSString* pName)
   chunk.PutBytes([pData bytes], static_cast<int>([pData length]));
   int pos = 0;
 //  IByteChunk::GetIPlugVerFromChunk(chunk, pos);
-  mStateGeneration.fetch_add(1);
-  mPlug->UnserializeState(chunk, pos);
+  {
+    std::lock_guard<std::mutex> lock(mStateMutex);
+    mStateGeneration.fetch_add(1);
+    mPlug->UnserializeState(chunk, pos);
+  }
 #endif
   
 //  [super setFullState: newFullState]; // this hangs auval
