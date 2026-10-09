@@ -28,6 +28,7 @@
 */
 
 #include "IPlugVisageEditorDelegate.h"
+#include <cmath>
 
 BEGIN_IPLUG_NAMESPACE
 
@@ -72,6 +73,22 @@ void* VisageEditorDelegate::OpenWindow(void* pParent)
 
   mWindow = visage::createPluginWindow(mEditor->width(), mEditor->height(), pParent);
   mEditor->addToWindow(mWindow.get());
+
+#ifdef OS_WIN
+  // The window's real DPI decides the host view scale, as IGraphicsWin does on open: a host may
+  // never send a content scale, or send one that doesn't match the parent it gives us (a
+  // DPI-unaware, bitmap-scaled parent is 1x whatever the monitor is). If they differ, tell the
+  // host the view's size again in its units.
+  if (pParent)
+  {
+    const float windowScale = mWindow->dpiScale();
+    if (std::fabs(windowScale - mHostViewScale) > 0.01f)
+    {
+      mHostViewScale = windowScale;
+      EditorResizeFromUI(GetEditorWidth(), GetEditorHeight(), true);
+    }
+  }
+#endif
   if (pParent)
     mWindow->show();
   else

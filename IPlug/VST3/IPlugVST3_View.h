@@ -14,6 +14,7 @@
 #include "pluginterfaces/base/keycodes.h"
 
 #include "IPlugStructs.h"
+#include <cmath>
 
 /** IPlug VST3 View  */
 template <class T>
@@ -59,7 +60,7 @@ public:
     if (pSize && mOwner.GetHostResizeEnabled())
     {
       rect = *pSize;
-      mOwner.OnParentWindowResize(rect.getWidth(), rect.getHeight());
+      mOwner.OnParentWindowResize(FromHost(rect.getWidth()), FromHost(rect.getHeight()));
       return Steinberg::kResultTrue;
     }
 
@@ -72,8 +73,9 @@ public:
     
     if (mOwner.HasUI())
     {
-      *pSize = Steinberg::ViewRect(0, 0, mOwner.GetEditorWidth(), mOwner.GetEditorHeight());
-      
+      mReportedHostScale = mOwner.GetHostViewScale();
+      *pSize = Steinberg::ViewRect(0, 0, ToHost(mOwner.GetEditorWidth()), ToHost(mOwner.GetEditorHeight()));
+
       return Steinberg::kResultTrue;
     }
     else
@@ -94,13 +96,13 @@ public:
   
   Steinberg::tresult PLUGIN_API checkSizeConstraint(Steinberg::ViewRect* pRect) override
   {
-    int w = pRect->getWidth();
-    int h = pRect->getHeight();
-    
+    int w = FromHost(pRect->getWidth());
+    int h = FromHost(pRect->getHeight());
+
     if(!mOwner.ConstrainEditorResize(w, h))
     {
-      pRect->right = pRect->left + w;
-      pRect->bottom = pRect->top + h;
+      pRect->right = pRect->left + ToHost(w);
+      pRect->bottom = pRect->top + ToHost(h);
     }
     
     return Steinberg::kResultTrue;
@@ -337,10 +339,22 @@ public:
   void Resize(int w, int h)
   {
     TRACE
-    
-    Steinberg::ViewRect newSize = Steinberg::ViewRect(0, 0, w, h);
-    plugFrame->resizeView(this, &newSize);
+
+    mReportedHostScale = mOwner.GetHostViewScale();
+    Steinberg::ViewRect newSize = Steinberg::ViewRect(0, 0, ToHost(w), ToHost(h));
+    if (plugFrame)
+      plugFrame->resizeView(this, &newSize);
   }
+
+  /** True when the host last saw the view at a different scale than the editor now reports. */
+  bool HostViewScaleChanged() const { return mReportedHostScale != mOwner.GetHostViewScale(); }
+
+private:
+  int ToHost(int v) const { return static_cast<int>(std::lround(v * mOwner.GetHostViewScale())); }
+  int FromHost(int v) const { return static_cast<int>(std::lround(v / mOwner.GetHostViewScale())); }
+  float mReportedHostScale = 1.f;
+
+public:
 
   T& mOwner;
 };
