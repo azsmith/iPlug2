@@ -255,7 +255,12 @@ LRESULT CALLBACK IGraphicsWin::WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
     return DefWindowProcW(hWnd, msg, wParam, lParam);
   }
   
-  auto IsTouchEvent = []() {
+  // Mouse messages that Windows synthesises from touch are dropped only when this window gets
+  // WM_TOUCH instead. Without RegisterTouchWindow (multi-touch off, or no digitizer at open)
+  // the synthesised messages are the only touch input the window will ever see.
+  auto IsTouchEvent = [pGraphics]() {
+    if (!pGraphics->mTouchRegistered)
+      return false;
     const LONG_PTR c_SIGNATURE_MASK = 0xFFFFFF00;
     const LONG_PTR c_MOUSEEVENTF_FROMTOUCH = 0xFF515700;
     LONG_PTR extraInfo = GetMessageExtraInfo();
@@ -439,6 +444,7 @@ LRESULT CALLBACK IGraphicsWin::WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
           info.y = static_cast<float>(pt.y) / scale;
           info.dX = 0.f;
           info.dY = 0.f;
+          info.ms.L = true; // a touch is a primary press, as on iOS
           info.ms.touchRadius = 0;
 
           if (pTI->dwMask & TOUCHINPUTMASKF_CONTACTAREA)
@@ -1074,7 +1080,7 @@ void* IGraphicsWin::OpenWindow(void* pParent)
 
   if (MultiTouchEnabled() && GetSystemMetrics(SM_DIGITIZER) & NID_MULTI_INPUT)
   {
-    RegisterTouchWindow(mPlugWnd, 0);
+    mTouchRegistered = RegisterTouchWindow(mPlugWnd, 0) != FALSE;
   }
 
   if (!mPlugWnd && --nWndClassReg == 0)
@@ -1208,6 +1214,7 @@ void IGraphicsWin::CloseWindow()
 
     DestroyWindow(mPlugWnd);
     mPlugWnd = 0;
+    mTouchRegistered = false;
 
     if (--nWndClassReg == 0)
     {
