@@ -347,6 +347,12 @@ public:
    * @param scale The new screen scale*/
   virtual void SetScreenScale(float scale) {}
 
+  /** Factor between the editor size (GetEditorWidth/Height) and the view size a host API reports
+   * and accepts. 1 when the editor size is already in the host's units: IGraphics on Windows
+   * resizes itself to physical pixels in SetScreenScale. An editor that keeps a logical size
+   * while its host expects physical pixels (VST3 on Windows) returns its screen scale. */
+  virtual float GetHostViewScale() const { return 1.f; }
+
   friend class IPlugAPP;
   friend class IPlugAAX;
   friend class IPlugVST2;

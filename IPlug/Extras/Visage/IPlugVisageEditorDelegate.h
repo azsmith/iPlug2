@@ -56,6 +56,11 @@ public:
   void CloseWindow() override;
   void OnParentWindowResize(int width, int height) override;
 
+  /** The editor size stays logical; a VST3 host on Windows sends its scale here and expects the
+   * view size in physical pixels, see GetHostViewScale(). */
+  void SetScreenScale(float scale) override { if (scale > 0.f) mHostViewScale = scale; }
+  float GetHostViewScale() const override { return mHostViewScale; }
+
   /** Get the Visage editor (for adding child frames, etc.)
    * @return Pointer to the ApplicationEditor, or nullptr if not open */
   visage::ApplicationEditor* GetEditor() { return mEditor.get(); }
@@ -100,6 +105,7 @@ protected:
 private:
   std::unique_ptr<visage::ApplicationEditor> mEditor;
   std::unique_ptr<visage::Window> mWindow;
+  float mHostViewScale = 1.f;
 };
 
 END_IPLUG_NAMESPACE
