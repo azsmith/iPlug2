@@ -79,6 +79,8 @@ UIColorPickerViewControllerDelegate
   IColorPickerHandlerFunc mColorPickerHandlerFunc;
   IFileDialogCompletionHandlerFunc mFileDialogFunc;
   float mPrevX, mPrevY;
+  CGPoint mScrollPrev;
+  bool mScrollActive;
 
 #ifdef IGRAPHICS_GL
   EGLDisplay mEGLDisplay;
