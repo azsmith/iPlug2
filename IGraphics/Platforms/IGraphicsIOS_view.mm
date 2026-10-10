@@ -302,7 +302,18 @@ extern StaticStorage<CoreTextFontDescriptor> sFontDescriptorCache;
   UIHoverGestureRecognizer* hoverGestureRecognizer =
       [[UIHoverGestureRecognizer alloc] initWithTarget:self action:@selector(onHoverGesture:)];
   [self addGestureRecognizer: hoverGestureRecognizer];
-  
+
+  // Two-finger trackpad / mouse-wheel scrolling turns the knob under the
+  // pointer exactly like a finger drag. Scroll events only: an empty
+  // allowedTouchTypes keeps this away from real finger touches.
+  UIPanGestureRecognizer* scrollGestureRecognizer =
+      [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(onScrollGesture:)];
+  scrollGestureRecognizer.allowedScrollTypesMask = UIScrollTypeMaskAll;
+  scrollGestureRecognizer.allowedTouchTypes = @[];
+  scrollGestureRecognizer.cancelsTouchesInView = NO;
+  [self addGestureRecognizer: scrollGestureRecognizer];
+  mScrollActive = false;
+
   return self;
 }
 
@@ -932,6 +943,66 @@ extern StaticStorage<CoreTextFontDescriptor> sFontDescriptorCache;
   
   if (mGraphics)
     mGraphics->OnMouseOver(info.x, info.y, info.ms);
+}
+
+- (void) onScrollGesture: (UIPanGestureRecognizer*) recognizer
+{
+  if (!mGraphics)
+    return;
+
+  const auto ds = mGraphics->GetDrawScale();
+  const CGPoint pos = [recognizer locationInView:self];
+  const CGPoint translation = [recognizer translationInView:self];
+
+  IMouseInfo point;
+  point.ms.L = true;
+  point.ms.touchID = reinterpret_cast<ITouchID>(recognizer);
+  point.x = pos.x / ds;
+  point.y = pos.y / ds;
+
+  switch (recognizer.state)
+  {
+    case UIGestureRecognizerStateBegan:
+    {
+      // Only knobs: a scroll over a button or switch must not press it.
+      IControl* pControl = nullptr;
+      for (int i = mGraphics->NControls() - 1; i >= 0; --i)
+      {
+        IControl* pCandidate = mGraphics->GetControl(i);
+        if (!pCandidate->IsHidden() && !pCandidate->GetIgnoreMouse() && !pCandidate->IsDisabled()
+            && pCandidate->IsHit(point.x, point.y))
+        {
+          pControl = pCandidate;
+          break;
+        }
+      }
+      if (!dynamic_cast<IKnobControlBase*>(pControl))
+        return;
+      mScrollActive = true;
+      mScrollPrev = translation;
+      mGraphics->OnMouseDown({point});
+      break;
+    }
+    case UIGestureRecognizerStateChanged:
+      if (!mScrollActive)
+        return;
+      // Fingers up (natural scrolling) is a negative translation, as is a drag up.
+      point.dX = (translation.x - mScrollPrev.x) / ds;
+      point.dY = (translation.y - mScrollPrev.y) / ds;
+      mScrollPrev = translation;
+      mGraphics->OnMouseDrag({point});
+      break;
+    case UIGestureRecognizerStateEnded:
+    case UIGestureRecognizerStateCancelled:
+    case UIGestureRecognizerStateFailed:
+      if (!mScrollActive)
+        return;
+      mScrollActive = false;
+      mGraphics->OnMouseUp({point});
+      break;
+    default:
+      break;
+  }
 }
 
 -(BOOL) gestureRecognizer:(UIGestureRecognizer*) gestureRecognizer shouldReceiveTouch:(UITouch*) touch
