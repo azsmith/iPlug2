@@ -131,6 +131,7 @@ private:
 
   HINSTANCE mHInstance = nullptr;
   HWND mPlugWnd = nullptr;
+  bool mTouchRegistered = false; // RegisterTouchWindow succeeded: touch arrives as WM_TOUCH
   HWND mParamEditWnd = nullptr;
   HWND mTooltipWnd = nullptr;
   HWND mParentWnd = nullptr;

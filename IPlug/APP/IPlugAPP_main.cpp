@@ -76,7 +76,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpszCmdPa
 
 #if !defined _DEBUG || defined NO_IGRAPHICS
     HMENU menu = GetMenu(gHWND);
+#ifndef APP_NO_DEBUG_MENU
     RemoveMenu(menu, 1, MF_BYPOSITION);
+#endif
     DrawMenuBar(gHWND);
 #endif
 
