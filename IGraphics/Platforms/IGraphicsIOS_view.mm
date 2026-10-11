@@ -306,6 +306,7 @@ extern StaticStorage<CoreTextFontDescriptor> sFontDescriptorCache;
   scrollGestureRecognizer.allowedTouchTypes = @[];
   scrollGestureRecognizer.cancelsTouchesInView = NO;
   [self addGestureRecognizer: scrollGestureRecognizer];
+  mScrollRecognizer = scrollGestureRecognizer;
   mScrollActive = false;
 
   return self;
@@ -347,6 +348,24 @@ extern StaticStorage<CoreTextFontDescriptor> sFontDescriptorCache;
   UITouch* pTouch;
   
   std::vector<IMouseInfo> points;
+
+  if (eventType == ETouchEvent::Began)
+  {
+    // allTouches is every touch still down; a capture keyed to anything else
+    // lost its end (seen in hosts) and would block its control for good.
+    NSSet* live = [event allTouches];
+    UIPanGestureRecognizer* scroll = mScrollActive ? mScrollRecognizer : nil;
+    const int released = mGraphics->ReleaseStaleTouches([live, scroll](ITouchID touchID) {
+      for (UITouch* t in live)
+        if (reinterpret_cast<ITouchID>(t) == touchID) return true;
+      return scroll && reinterpret_cast<ITouchID>(scroll) == touchID;
+    });
+#ifndef NDEBUG
+    if (released) NSLog(@"IGraphicsIOS: released %d stale touch capture(s)", released);
+#else
+    (void) released;
+#endif
+  }
 
   while ((pTouch = [pEnumerator nextObject]))
   {

@@ -1536,6 +1536,12 @@ public:
   /** Called when the platform class sends touch cancel events */
   void OnTouchCancelled(const std::vector<IMouseInfo>& points);
 
+  /** Cancels every captured touch for which isLive() returns false: a touch whose
+   * end never arrived would otherwise keep its control captured, and with
+   * multi-touch on a captured control refuses every new touch.
+   * @return The number of captures released */
+  int ReleaseStaleTouches(const std::function<bool(ITouchID)>& isLive);
+
   /** @param x The X coordinate at which the mouse event occurred
    * @param y The Y coordinate at which the mouse event occurred
    * @param mod IMouseMod struct contain information about the modifiers held

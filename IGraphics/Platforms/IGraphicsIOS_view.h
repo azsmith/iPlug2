@@ -81,6 +81,7 @@ UIColorPickerViewControllerDelegate
   float mPrevX, mPrevY;
   CGPoint mScrollPrev;
   bool mScrollActive;
+  UIPanGestureRecognizer* mScrollRecognizer;
 
 #ifdef IGRAPHICS_GL
   EGLDisplay mEGLDisplay;
