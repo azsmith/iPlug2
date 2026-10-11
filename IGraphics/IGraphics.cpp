@@ -1125,12 +1125,37 @@ void IGraphics::OnTouchCancelled(const std::vector<IMouseInfo>& points)
       {
         IControl* pCapturedControl = itr->second;
         pCapturedControl->OnTouchCancelled(x, y, mod);
+        // Close the host gesture OnMouseDown opened, as OnMouseUp does.
+        for (int v = 0; v < pCapturedControl->NVals(); v++)
+        {
+          if (pCapturedControl->GetParamIdx(v) > kNoParameter)
+            GetDelegate()->EndInformHostOfParamChangeFromUI(pCapturedControl->GetParamIdx(v));
+        }
         mCapturedMap.erase(mod.touchID); // remove from captured list
         
         //        DBGMSG("DEL - NCONTROLS captured = %lu\n", mCapturedMap.size());
       }
     }
   }
+}
+
+int IGraphics::ReleaseStaleTouches(const std::function<bool(ITouchID)>& isLive)
+{
+  std::vector<IMouseInfo> stale;
+  for (const auto& [touchID, pControl] : mCapturedMap)
+  {
+    if (isLive(touchID))
+      continue;
+    IMouseInfo info;
+    info.x = pControl->GetRECT().MW();
+    info.y = pControl->GetRECT().MH();
+    info.ms.L = true;
+    info.ms.touchID = touchID;
+    stale.push_back(info);
+  }
+  if (!stale.empty())
+    OnTouchCancelled(stale);
+  return static_cast<int>(stale.size());
 }
 
 bool IGraphics::OnMouseOver(float x, float y, const IMouseMod& mod)
