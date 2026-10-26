@@ -860,7 +860,10 @@ void IGraphicsWin::HideMouseCursor(bool hide, bool lock)
       
     ShowCursor(false);
     mCursorHidden = true;
-    mCursorLock = lock && !mTabletInput;
+    // Not over Remote Desktop: the client sends absolute positions and does not follow
+    // SetCursorPos, so after each warp the next delta would be the whole distance since the
+    // drag began, and a knob would accelerate the further it is dragged.
+    mCursorLock = lock && !mTabletInput && !GetSystemMetrics(SM_REMOTESESSION);
   }
   else
   {
