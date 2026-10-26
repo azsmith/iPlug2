@@ -14,6 +14,7 @@
 
 #ifdef OS_WIN
 #include "asio.h"
+#include "IPlugAPP_shutdown.h"
 extern float GetScaleForHWND(HWND hWnd);
 #define GET_MENU() GetMenu(gHWND)
 #elif defined OS_MAC
@@ -553,7 +554,16 @@ WDL_DLGRET IPlugAPPHost::MainDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPA
         DBGMSG("couldn't attach gui\n");
       }
 
-      ClientResize(hwndDlg, pPlug->GetEditorWidth(), pPlug->GetEditorHeight());
+      int editorW = pPlug->GetEditorWidth();
+      int editorH = pPlug->GetEditorHeight();
+#ifdef OS_WIN
+      // Adapted from Grainsmith's e8424356a: editor units are logical,
+      // while a per-monitor-aware standalone window needs physical pixels.
+      const float initialScale = GetScaleForHWND(hwndDlg);
+      editorW = static_cast<int>(editorW * initialScale + 0.5f);
+      editorH = static_cast<int>(editorH * initialScale + 0.5f);
+#endif
+      ClientResize(hwndDlg, editorW, editorH);
 
       ShowWindow(hwndDlg, SW_SHOW);
       return 1;
@@ -561,11 +571,29 @@ WDL_DLGRET IPlugAPPHost::MainDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPA
     case WM_DESTROY:
       pAppHost->CloseWindow();
       gHWND = NULL;
-      IPlugAPPHost::sInstance = nullptr;
       
       #ifdef OS_WIN
+      {
+        auto owner = std::move(IPlugAPPHost::sInstance);
+        owner->mExiting.store(true, std::memory_order_release);
+        if (!detail::FinishOwnedShutdown(std::move(owner),
+              [](IPlugAPPHost& host) {
+                host.CloseAudio();
+                // Driver destructors and MIDI close can block too. Complete
+                // them within the same bound, retaining all callback data on
+                // failure; leave plugin/UI destruction on the UI thread.
+                host.mDAC.reset();
+                if (host.mMidiIn) host.mMidiIn->cancelCallback();
+                host.mMidiIn.reset();
+                if (host.mMidiOut) host.mMidiOut->closePort();
+                host.mMidiOut.reset();
+              },
+              std::chrono::milliseconds(3000)))
+          OutputDebugStringA("iPlug2: audio shutdown timed out or failed; retaining host until process exit.\n");
+      }
       PostQuitMessage(0);
       #else
+      IPlugAPPHost::sInstance = nullptr;
       SWELL_PostQuitMessage(hwndDlg);
       #endif
 
@@ -721,7 +749,7 @@ WDL_DLGRET IPlugAPPHost::MainDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPA
     {
       WORD dpi = HIWORD(wParam);
       RECT* rect = (RECT*)lParam;
-      float scale = GetScaleForHWND(hwndDlg);
+      const float scale = static_cast<float>(dpi) / USER_DEFAULT_SCREEN_DPI;
 
       POINT ptDiff;
       RECT rcClient;
@@ -749,8 +777,8 @@ WDL_DLGRET IPlugAPPHost::MainDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPA
       IEditorDelegate* pPlug = dynamic_cast<IEditorDelegate*>(pAppHost->GetPlug());
 #endif
 
-      int w = pPlug->GetEditorWidth(); 
-      int h = pPlug->GetEditorHeight();
+      int w = static_cast<int>(pPlug->GetEditorWidth() * scale + 0.5f);
+      int h = static_cast<int>(pPlug->GetEditorHeight() * scale + 0.5f);
 
       SetWindowPos(hwndDlg, 0, rect->left, rect->top, w + ptDiff.x, h + ptDiff.y, 0);
 

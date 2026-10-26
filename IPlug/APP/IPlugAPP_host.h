@@ -33,6 +33,7 @@
 #include <vector>
 #include <limits>
 #include <memory>
+#include <atomic>
 #include <optional>
 
 #include "wdltypes.h"
@@ -236,9 +237,9 @@ private:
   uint32_t mBufIndex = 0; // index for signal vector, loops from 0 to mSigVS
   uint32_t mOpenedInputChans = 0;
   uint32_t mOpenedOutputChans = 0;
-  bool mExiting = false;
-  bool mAudioEnding = false;
-  bool mAudioDone = false;
+  std::atomic<bool> mExiting {false};
+  std::atomic<bool> mAudioEnding {false};
+  std::atomic<bool> mAudioDone {false};
 
   /** The ID of the operating system's default input device if detected */
   std::optional<uint32_t> mDefaultInputDev;
