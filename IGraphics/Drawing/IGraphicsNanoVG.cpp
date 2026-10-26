@@ -316,8 +316,14 @@ IBitmap IGraphicsNanoVG::LoadBitmap(const char* name, int nStates, bool framesAr
 APIBitmap* IGraphicsNanoVG::LoadAPIBitmap(const char* fileNameOrResID, int scale, EResourceLocation location, const char* ext)
 {
   int idx = 0;
+#if defined IGRAPHICS_GL
+  // Bitmaps drawn well below their size (2x art at a < 1 draw scale on a 96 dpi screen) alias
+  // with plain bilinear filtering; mipmaps give trilinear minification.
+  int nvgImageFlags = NVG_IMAGE_GENERATE_MIPMAPS;
+#else
   int nvgImageFlags = 0;
-  
+#endif
+
   // Preloaded textures are only supported with Metal, not ANGLE/GLES
 #if defined OS_IOS && defined IGRAPHICS_METAL
   if (location == EResourceLocation::kPreloadedTexture)
