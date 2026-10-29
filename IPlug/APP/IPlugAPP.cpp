@@ -57,7 +57,13 @@ bool IPlugAPP::EditorResize(int viewWidth, int viewHeight)
     
     #ifdef OS_WIN
     flags = SWP_NOMOVE;
+    #ifdef PC_WINDOWS_SKIA_EDITOR
+    // Skia sends physical client dimensions; both the client and frame metrics
+    // already use the window's DPI. Multiplication here applies DPI twice.
+    float ss = 1.f;
+    #else
     float ss = GetScaleForHWND(gHWND);
+    #endif
     #else
     float ss = 1.f;
     #endif

@@ -35,6 +35,8 @@
 #include <memory>
 #include <optional>
 #include <string_view>
+#include <atomic>
+#include "AudioCallbackLifetime.h"
 
 #include "wdltypes.h"
 #include "wdlstring.h"
@@ -216,7 +218,7 @@ public:
   void ProbeAudioIO();
   void ProbeMidiIO();
   bool InitMidi();
-  void CloseAudio();
+  bool CloseAudio();
   bool InitAudio(uint32_t inId, uint32_t outId, uint32_t sr, uint32_t iovs);
   bool AudioSettingsInStateAreEqual(AppState& os, AppState& ns);
   bool MIDISettingsInStateAreEqual(AppState& os, AppState& ns);
@@ -251,7 +253,16 @@ public:
 
 private:
   std::unique_ptr<IPlugAPP> mIPlug = nullptr;
-  std::unique_ptr<RtAudio> mDAC = nullptr;
+  using AudioLifetime = AudioCallbackLifetime<IPlugAPPHost>;
+  std::shared_ptr<AudioLifetime> mAudioLifetime;
+  std::unique_ptr<RtAudio> mDAC = nullptr; // destroyed before callback userdata
+  struct AudioTeardown
+  {
+    std::shared_ptr<AudioLifetime> lifetime;
+    std::unique_ptr<RtAudio> dac; // destroyed before its callback userdata
+    std::atomic<bool> done {false};
+  };
+  std::shared_ptr<AudioTeardown> mAudioTeardown;
   std::unique_ptr<RtMidiIn> mMidiIn = nullptr;
   std::unique_ptr<RtMidiOut> mMidiOut = nullptr;
   int mMidiOutChannel = -1;
@@ -272,8 +283,8 @@ private:
   uint32_t mOpenedOutputChans = 0;
   std::vector<double> mSilenceBuf; // silence for missing input channels
   bool mExiting = false;
-  bool mAudioEnding = false;
-  bool mAudioDone = false;
+  std::atomic<bool> mAudioEnding {false};
+  std::atomic<bool> mAudioDone {false};
   bool mNoIO = false;
 
   /** The ID of the operating system's default input device if detected */

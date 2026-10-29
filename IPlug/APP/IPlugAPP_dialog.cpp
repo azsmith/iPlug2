@@ -166,13 +166,13 @@ void IPlugAPPHost::PopulateDriverSpecificControls(HWND hwndDlg)
   RtAudio::DeviceInfo inputDevInfo;
   RtAudio::DeviceInfo outputDevInfo;
 
-  if (mAudioInputDevIDs.size())
+  if (mDAC && mAudioInputDevIDs.size())
   {
     inputDevInfo = mDAC->getDeviceInfo(mAudioInputDevIDs[indevidx]);
     PopulateAudioInputList(hwndDlg, &inputDevInfo);
   }
 
-  if (mAudioOutputDevIDs.size())
+  if (mDAC && mAudioOutputDevIDs.size())
   {
     outputDevInfo = mDAC->getDeviceInfo(mAudioOutputDevIDs[outdevidx]);
     PopulateAudioOutputList(hwndDlg, &outputDevInfo);
@@ -468,7 +468,7 @@ WDL_DLGRET IPlugAPPHost::PreferencesDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wPar
           if (HIWORD(wParam) == BN_CLICKED)
           {
             #ifdef OS_WIN
-            if ( (_this->mState.mAudioDriverType == kDeviceASIO) && (_this->mDAC->isStreamRunning() == true)) // TODO: still not right
+            if ( (_this->mState.mAudioDriverType == kDeviceASIO) && (_this->mDAC && _this->mDAC->isStreamRunning())) // TODO: still not right
               ASIOControlPanel();
             #elif defined OS_MAC
             if (SWELL_GetOSXVersion() >= 0x1200)
@@ -587,7 +587,7 @@ WDL_DLGRET IPlugAPPHost::MainDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPA
       int editorW = pPlug->GetEditorWidth();
       int editorH = pPlug->GetEditorHeight();
 
-#ifdef OS_WIN
+#if defined(OS_WIN) && !defined(PC_WINDOWS_SKIA_EDITOR)
       // Editor dimensions are logical; the process is per-monitor DPI aware,
       // so the client area must be sized in physical pixels or the DPI-scaled
       // UI gets clipped (matches the scaling in WM_GETMINMAXINFO/EditorResize).
@@ -833,43 +833,17 @@ WDL_DLGRET IPlugAPPHost::MainDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPA
 #ifdef OS_WIN
     case WM_DPICHANGED:
     {
-      WORD dpi = HIWORD(wParam);
-      RECT* rect = (RECT*)lParam;
-      float scale = GetScaleForHWND(hwndDlg);
-
-      POINT ptDiff;
-      RECT rcClient;
-      RECT rcWindow;
-
-      GetClientRect(hwndDlg, &rcClient);
-      GetWindowRect(hwndDlg, &rcWindow);
-
-      ptDiff.x = (rcWindow.right - rcWindow.left) - rcClient.right;
-      ptDiff.y = (rcWindow.bottom - rcWindow.top) - rcClient.bottom;
-
-#ifndef NO_IGRAPHICS
-      IGEditorDelegate* pPlug = dynamic_cast<IGEditorDelegate*>(pAppHost->GetPlug());
-
-      if (pPlug)
-      {
-        IGraphics* pGraphics = pPlug->GetUI();
-
-        if (pGraphics)
-        {
-          pGraphics->SetScreenScale(scale);
-        }
-      }
-#else
-      IEditorDelegate* pPlug = dynamic_cast<IEditorDelegate*>(pAppHost->GetPlug());
-#endif
-
-      // Editor dimensions are logical — convert to physical pixels at the new
-      // DPI (from wParam, since the window may still report the old DPI here).
+      const WORD dpi = HIWORD(wParam);
+      const RECT suggested = *reinterpret_cast<const RECT*>(lParam);
       const float newScale = static_cast<float>(dpi) / USER_DEFAULT_SCREEN_DPI;
-      int w = static_cast<int>(pPlug->GetEditorWidth() * newScale + 0.5f);
-      int h = static_cast<int>(pPlug->GetEditorHeight() * newScale + 0.5f);
-
-      SetWindowPos(hwndDlg, 0, rect->left, rect->top, w + ptDiff.x, h + ptDiff.y, 0);
+      // wParam is authoritative: querying the HWND here can still return old DPI.
+      auto* pPlug = pAppHost->GetPlug();
+      if (pPlug) pPlug->SetScreenScale(newScale);
+      // Windows calculated these physical bounds, including the new nonclient
+      // metrics. Keep its position (which may have a negative monitor origin).
+      SetWindowPos(hwndDlg, nullptr, suggested.left, suggested.top,
+                   suggested.right - suggested.left, suggested.bottom - suggested.top,
+                   SWP_NOZORDER | SWP_NOACTIVATE);
 
       return 0;
     }

@@ -206,6 +206,8 @@ void IPlugAPPHost::UpdateINI()
 
 std::string IPlugAPPHost::GetAudioDeviceName(uint32_t deviceID) const
 {
+  if (!mDAC)
+    return {};
   auto str = mDAC->getDeviceInfo(deviceID).name;
   std::size_t pos = str.find(':');
 
@@ -222,6 +224,8 @@ std::string IPlugAPPHost::GetAudioDeviceName(uint32_t deviceID) const
 
 std::optional<uint32_t> IPlugAPPHost::GetAudioDeviceID(const char* deviceNameToTest) const
 {
+  if (!mDAC)
+    return std::nullopt;
   auto deviceIDs = mDAC->getDeviceIds();
 
   for (auto deviceID : deviceIDs)
@@ -387,7 +391,8 @@ bool IPlugAPPHost::MIDISettingsInStateAreEqual(AppState& os, AppState& ns)
 
 bool IPlugAPPHost::TryToChangeAudioDriverType()
 {
-  CloseAudio();
+  if (!CloseAudio())
+    return false;
 
   if (mDAC)
   {
@@ -426,6 +431,9 @@ bool IPlugAPPHost::TryToChangeAudio()
   // Skip audio initialization in no-I/O mode or screenshot mode
   if (mNoIO || IsScreenshotMode())
     return true;
+
+  if (!CloseAudio() || !mDAC)
+    return false;
 
 #if defined OS_WIN
   // ASIO has one device, use the output for the input ID
@@ -575,65 +583,69 @@ bool IPlugAPPHost::SelectMIDIDevice(ERoute direction, const char* pPortName)
   return false;
 }
 
-void IPlugAPPHost::CloseAudio()
+bool IPlugAPPHost::CloseAudio()
 {
-  if (mDAC && mDAC->isStreamOpen())
+  // Reuse a backend only after its previous teardown has actually completed.
+  if (mAudioTeardown)
   {
-    if (mDAC->isStreamRunning())
-    {
-      mAudioEnding = true;
-
-      // Wait for the audio callback to acknowledge the fade-out, but never
-      // block forever: mAudioDone is only set from inside the callback, so if
-      // the callback has stopped being serviced it never flips. Cap the wait.
-      int waitedMs = 0;
-      while (!mAudioDone && waitedMs < 1000)
-      {
-        Sleep(10);
-        waitedMs += 10;
-      }
-    }
-
-    // Tear the stream down on a worker thread guarded by a timeout. On a
-    // healthy device abortStream()/closeStream() return immediately and we
-    // join right away. But if the device has stopped being serviced (e.g. over
-    // Remote Desktop a stream opens yet is never clocked) these RtAudio calls
-    // block forever — and on the UI thread, inside WM_DESTROY, that hangs
-    // shutdown before PostQuitMessage and leaves a windowless zombie process.
-    // If teardown doesn't finish in time, abandon (leak) the RtAudio instance
-    // and carry on: the process is exiting so the OS reclaims it, and leaking
-    // keeps the detached worker's pointer valid until then.
-    RtAudio* pDAC = mDAC.get();
-    auto done = std::make_shared<std::atomic<bool>>(false);
-    std::thread worker([pDAC, done]() {
-      if (pDAC->isStreamRunning())
-        pDAC->abortStream();
-      pDAC->closeStream();
-      done->store(true, std::memory_order_release);
-    });
-
-    int waitedMs = 0;
-    while (!done->load(std::memory_order_acquire) && waitedMs < 2000)
-    {
-      Sleep(10);
-      waitedMs += 10;
-    }
-
-    if (done->load(std::memory_order_acquire))
-    {
-      worker.join();
-    }
-    else
-    {
-      worker.detach();
-      mDAC.release(); // leak the wedged RtAudio; OS reclaims at process exit
-    }
+    if (!mAudioTeardown->done.load(std::memory_order_acquire))
+      return false;
+    mDAC = std::move(mAudioTeardown->dac);
+    mAudioTeardown.reset();
   }
+  if (!mDAC || !mDAC->isStreamOpen())
+    return true;
+
+  if (mDAC->isStreamRunning())
+  {
+    mAudioEnding = true;
+    for (int waitedMs = 0; !mAudioDone && waitedMs < 1000; waitedMs += 10)
+      Sleep(10);
+  }
+
+  // Wait for an in-flight render, not for the driver. After revocation a late
+  // callback cannot touch the host, even if backend teardown never returns.
+  if (mAudioLifetime)
+    mAudioLifetime->Revoke();
+
+  auto teardown = std::make_shared<AudioTeardown>();
+  teardown->dac = std::move(mDAC);
+  teardown->lifetime = std::move(mAudioLifetime);
+  std::thread worker([teardown]() {
+    if (teardown->dac->isStreamRunning())
+      teardown->dac->abortStream();
+    teardown->dac->closeStream();
+    // closeStream has no return status in this RtAudio version. Never reuse
+    // a backend that still reports an open stream. Destroy it on this worker,
+    // retaining revoked userdata throughout even if its destructor wedges.
+    if (teardown->dac->isStreamOpen())
+      teardown->dac.reset();
+    teardown->done.store(true, std::memory_order_release);
+  });
+  for (int waitedMs = 0; !teardown->done.load(std::memory_order_acquire) && waitedMs < 2000; waitedMs += 10)
+    Sleep(10);
+
+  if (teardown->done.load(std::memory_order_acquire))
+  {
+    worker.join();
+    mDAC = std::move(teardown->dac);
+    return true;
+  }
+
+  // The worker retains backend and revoked callback userdata. Keep completion
+  // state for a later settings retry; host destruction does not invalidate it.
+  mAudioTeardown = teardown;
+  worker.detach();
+  DBGMSG("Audio device is still closing; retry settings after it completes.\n");
+  return false;
 }
 
 bool IPlugAPPHost::InitAudio(uint32_t inID, uint32_t outID, uint32_t sr, uint32_t iovs)
 {
-  CloseAudio();
+  if (!CloseAudio() || !mDAC)
+    return false;
+
+  mAudioLifetime = std::make_shared<AudioLifetime>(this);
 
   RtAudio::StreamParameters iParams, oParams;
   const uint32_t requestedInputChans = GetPlug()->MaxNChannels(ERoute::kInput);
@@ -643,6 +655,7 @@ bool IPlugAPPHost::InitAudio(uint32_t inID, uint32_t outID, uint32_t sr, uint32_
   iParams.firstChannel = 0; // TODO: flexible channel count
 
   oParams.deviceId = outID;
+  mAudioLifetime->outputChannels = requestedOutputChans;
   oParams.nChannels = requestedOutputChans; // TODO: flexible channel count
   oParams.firstChannel = 0; // TODO: flexible channel count
 
@@ -671,7 +684,7 @@ bool IPlugAPPHost::InitAudio(uint32_t inID, uint32_t outID, uint32_t sr, uint32_
   auto tryOpenStream = [&](uint32_t inputChans) {
     iParams.nChannels = inputChans;
     return mDAC->openStream(&oParams, inputChans > 0 ? &iParams : nullptr,
-                            RTAUDIO_FLOAT64, sr, &mBufferSize, &AudioCallback, this, &options);
+                            RTAUDIO_FLOAT64, sr, &mBufferSize, &AudioCallback, mAudioLifetime.get(), &options);
   };
 
   auto status = tryOpenStream(requestedInputChans);
@@ -786,7 +799,15 @@ void ApplyFades(double *pBuffer, int nChans, int nFrames, bool down)
 // static
 int IPlugAPPHost::AudioCallback(void* pOutputBuffer, void* pInputBuffer, uint32_t nFrames, double streamTime, RtAudioStreamStatus status, void* pUserData)
 {
-  IPlugAPPHost* _this = (IPlugAPPHost*) pUserData;
+  auto* lifetime = static_cast<AudioLifetime*>(pUserData);
+  std::unique_lock<std::mutex> callbackLock(lifetime->mutex, std::try_to_lock);
+  if (!callbackLock.owns_lock() || !lifetime->owner)
+  {
+    if (pOutputBuffer)
+      memset(pOutputBuffer, 0, nFrames * lifetime->outputChannels * sizeof(double));
+    return 2; // RtAudio abort: never dereference a revoked owner.
+  }
+  IPlugAPPHost* _this = lifetime->owner;
 
   int nins = static_cast<int>(_this->mOpenedInputChans);
   int nouts = static_cast<int>(_this->mOpenedOutputChans);

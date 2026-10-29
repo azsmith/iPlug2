@@ -36,6 +36,8 @@ public:
 
   void ForceEndUserEdit() override;
   float GetPlatformWindowScale() const override { return GetScreenScale(); }
+  // Zero follows HWND DPI; a positive host content scale takes precedence.
+  void SetHostScreenScale(float scale);
 
   void PlatformResize(bool parentHasResized) override;
 
@@ -96,6 +98,7 @@ protected:
   IRECT GetWindowRECT();
 
 private:
+  float mHostScreenScale = 0.f;
 
   /** Called either in response to WM_TIMER tick or user message WM_VBLANK, triggered by VSYNC thread
     * @param vBlankCount will allow redraws to get paced by the vblank message. Passing 0 is a WM_TIMER fallback. */

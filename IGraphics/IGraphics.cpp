@@ -75,8 +75,8 @@ IGraphics::~IGraphics()
 void IGraphics::SetScreenScale(float scale)
 {
   mScreenScale = scale;
-  int windowWidth = WindowWidth() * GetPlatformWindowScale();
-  int windowHeight = WindowHeight() * GetPlatformWindowScale();
+  int windowWidth = static_cast<int>(WindowWidth() * GetPlatformWindowScale() + 0.5f);
+  int windowHeight = static_cast<int>(WindowHeight() * GetPlatformWindowScale() + 0.5f);
   
   assert(windowWidth > 0 && windowHeight > 0 && "Window dimensions invalid");
 
@@ -105,8 +105,8 @@ void IGraphics::Resize(int w, int h, float scale, bool needsPlatformResize)
   if (mCornerResizer)
     mCornerResizer->OnRescale();
 
-  int windowWidth = WindowWidth() * GetPlatformWindowScale();
-  int windowHeight = WindowHeight() * GetPlatformWindowScale();
+  int windowWidth = static_cast<int>(WindowWidth() * GetPlatformWindowScale() + 0.5f);
+  int windowHeight = static_cast<int>(WindowHeight() * GetPlatformWindowScale() + 0.5f);
 
   bool parentResized = GetDelegate()->EditorResizeFromUI(windowWidth, windowHeight, needsPlatformResize);
   PlatformResize(parentResized);

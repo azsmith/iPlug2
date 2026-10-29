@@ -159,7 +159,7 @@ void IGraphicsWin::OnDisplayTimer(int vBlankCount)
   // TODO: move this... listen to the right messages in windows for screen resolution changes, etc.
   if (!GetCapture()) // workaround Windows issues with window sizing during mouse move
   {
-    float scale = GetScaleForHWND(mPlugWnd);
+    float scale = mHostScreenScale > 0.f ? mHostScreenScale : GetScaleForHWND(mPlugWnd);
     if (scale != GetScreenScale())
       SetScreenScale(scale);
   }
@@ -811,7 +811,8 @@ void IGraphicsWin::PlatformResize(bool parentHasResized)
     HWND pParent = 0, pGrandparent = 0;
     int dlgW = 0, dlgH = 0, parentW = 0, parentH = 0, grandparentW = 0, grandparentH = 0;
     GetWindowSize(mPlugWnd, &dlgW, &dlgH);
-    int dw = (WindowWidth() * GetScreenScale()) - dlgW, dh = (WindowHeight()* GetScreenScale()) - dlgH;
+    int dw = static_cast<int>(WindowWidth() * GetScreenScale() + .5f) - dlgW;
+      int dh = static_cast<int>(WindowHeight() * GetScreenScale() + .5f) - dlgH;
       
     if (IsChildWindow(mPlugWnd))
     {
@@ -1032,11 +1033,24 @@ EMsgBoxResult IGraphicsWin::ShowMessageBox(const char* str, const char* title, E
   return result;
 }
 
+void IGraphicsWin::SetHostScreenScale(float scale)
+{
+  if (!(scale >= 0.f && scale <= 8.f)) return;
+  mHostScreenScale = scale;
+  if (mPlugWnd)
+  {
+    const float effective = scale > 0.f ? scale : GetScaleForHWND(mPlugWnd);
+    if (effective != GetScreenScale()) SetScreenScale(effective);
+  }
+}
+
 void* IGraphicsWin::OpenWindow(void* pParent)
 {
   mParentWnd = (HWND) pParent;
-  int screenScale = GetScaleForHWND(mParentWnd);
-  int x = 0, y = 0, w = WindowWidth() * screenScale, h = WindowHeight() * screenScale;
+  const float screenScale = mHostScreenScale > 0.f ? mHostScreenScale : GetScaleForHWND(mParentWnd);
+  int x = 0, y = 0;
+  int w = static_cast<int>(WindowWidth() * screenScale + 0.5f);
+  int h = static_cast<int>(WindowHeight() * screenScale + 0.5f);
 
   if (mPlugWnd)
   {
