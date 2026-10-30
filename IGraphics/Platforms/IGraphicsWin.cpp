@@ -283,7 +283,7 @@ LRESULT CALLBACK IGraphicsWin::WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
     case WM_LBUTTONDOWN:
     case WM_MBUTTONDOWN:
     {
-      if (IsTouchEvent())
+      if (pGraphics->MultiTouchEnabled() && IsTouchEvent())
         return 0;
 
       pGraphics->HideTooltip();
@@ -306,7 +306,7 @@ LRESULT CALLBACK IGraphicsWin::WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
     }
     case WM_MOUSEMOVE:
     {
-      if (IsTouchEvent())
+      if (pGraphics->MultiTouchEnabled() && IsTouchEvent())
         return 0;
 
       if (!(wParam & (MK_LBUTTON | MK_RBUTTON)))
@@ -381,7 +381,7 @@ LRESULT CALLBACK IGraphicsWin::WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
     case WM_LBUTTONDBLCLK:
     case WM_RBUTTONDBLCLK:
     {
-      if (IsTouchEvent())
+      if (pGraphics->MultiTouchEnabled() && IsTouchEvent())
         return 0;
 
       IMouseInfo info = pGraphics->GetMouseInfo(lParam, wParam);
@@ -411,74 +411,15 @@ LRESULT CALLBACK IGraphicsWin::WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
     }
     case WM_TOUCH:
     {
-      UINT nTouches = LOWORD(wParam);
-
-      if (nTouches > 0)
+      const UINT count = LOWORD(wParam);
+      const HTOUCHINPUT handle = reinterpret_cast<HTOUCHINPUT>(lParam);
+      if (count > 0 && count <= 64)
       {
-        WDL_TypedBuf<TOUCHINPUT> touches;
-        touches.Resize(nTouches);
-        HTOUCHINPUT hTouchInput = (HTOUCHINPUT) lParam;
-        std::vector<IMouseInfo> downlist;
-        std::vector<IMouseInfo> uplist;
-        std::vector<IMouseInfo> movelist;
-        const float scale = pGraphics->GetTotalScale();
-
-        GetTouchInputInfo(hTouchInput, nTouches, touches.Get(), sizeof(TOUCHINPUT));
-
-        for (int i = 0; i < nTouches; i++)
-        {
-          TOUCHINPUT* pTI = touches.Get() +i;
-
-          POINT pt;
-          pt.x = TOUCH_COORD_TO_PIXEL(pTI->x);
-          pt.y = TOUCH_COORD_TO_PIXEL(pTI->y);
-          ScreenToClient(pGraphics->mPlugWnd, &pt);
-
-          IMouseInfo info;
-          info.x = static_cast<float>(pt.x) / scale;
-          info.y = static_cast<float>(pt.y) / scale;
-          info.dX = 0.f;
-          info.dY = 0.f;
-          info.ms.touchRadius = 0;
-
-          if (pTI->dwMask & TOUCHINPUTMASKF_CONTACTAREA)
-          {
-            info.ms.touchRadius = pTI->cxContact;
-          }
-
-          info.ms.touchID = static_cast<ITouchID>(pTI->dwID);
-
-          if (pTI->dwFlags & TOUCHEVENTF_DOWN)
-          {
-            downlist.push_back(info);
-            pGraphics->mDeltaCapture.insert(std::make_pair(info.ms.touchID, info));
-          }
-          else if (pTI->dwFlags & TOUCHEVENTF_UP)
-          {
-            pGraphics->mDeltaCapture.erase(info.ms.touchID);
-            uplist.push_back(info);
-          }
-          else if (pTI->dwFlags & TOUCHEVENTF_MOVE)
-          {
-            IMouseInfo previous = pGraphics->mDeltaCapture.find(info.ms.touchID)->second;
-            info.dX = info.x - previous.x;
-            info.dY = info.y - previous.y;
-            movelist.push_back(info);
-            pGraphics->mDeltaCapture[info.ms.touchID] = info;
-          }
-        }
-
-        if (downlist.size())
-          pGraphics->OnMouseDown(downlist);
-
-        if (uplist.size())
-          pGraphics->OnMouseUp(uplist);
-
-        if (movelist.size())
-          pGraphics->OnMouseDrag(movelist);
-
-        CloseTouchInputHandle(hTouchInput);
+        std::vector<TOUCHINPUT> touches(count);
+        if (GetTouchInputInfo(handle, count, touches.data(), sizeof(TOUCHINPUT)))
+          pGraphics->ProcessTouchInput(touches.data(), count);
       }
+      CloseTouchInputHandle(handle);
       return 0;
     }
     case WM_GETDLGCODE:
@@ -1086,7 +1027,7 @@ void* IGraphicsWin::OpenWindow(void* pParent)
 
   GetDelegate()->LayoutUI(this);
 
-  if (MultiTouchEnabled() && GetSystemMetrics(SM_DIGITIZER) & NID_MULTI_INPUT)
+  if (MultiTouchEnabled())
   {
     RegisterTouchWindow(mPlugWnd, 0);
   }
@@ -1230,9 +1171,50 @@ void IGraphicsWin::CloseWindow()
   }
 }
 
+void IGraphicsWin::ProcessTouchInput(const TOUCHINPUT* touches, UINT count)
+{
+  if (!touches || count > 64 || !mPlugWnd) return;
+  const float scale = GetTotalScale();
+  for (UINT i = 0; i < count; ++i)
+  {
+    const auto& touch = touches[i];
+    POINT point{TOUCH_COORD_TO_PIXEL(touch.x), TOUCH_COORD_TO_PIXEL(touch.y)};
+    ScreenToClient(mPlugWnd, &point);
+    IMouseInfo info;
+    info.x = float(point.x) / scale;
+    info.y = float(point.y) / scale;
+    info.dX = info.dY = 0.f;
+    info.ms.touchID = static_cast<ITouchID>(touch.dwID);
+    info.ms.L = (touch.dwFlags & TOUCHEVENTF_UP) == 0;
+    info.ms.touchRadius = (touch.dwMask & TOUCHINPUTMASKF_CONTACTAREA)
+      ? float(touch.cxContact) / (200.f * scale) : 0.f;
+    if (touch.dwFlags & TOUCHEVENTF_DOWN)
+    {
+      if (mDeltaCapture.size() >= 64) continue;
+      SetFocus(mPlugWnd);
+      mDeltaCapture[info.ms.touchID] = info;
+      OnMouseDown({info});
+    }
+    else if (touch.dwFlags & TOUCHEVENTF_UP)
+    {
+      mDeltaCapture.erase(info.ms.touchID);
+      OnMouseUp({info});
+    }
+    else if (touch.dwFlags & TOUCHEVENTF_MOVE)
+    {
+      const auto previous = mDeltaCapture.find(info.ms.touchID);
+      if (previous == mDeltaCapture.end()) continue; // contact began elsewhere/cancelled
+      info.dX = info.x - previous->second.x;
+      info.dY = info.y - previous->second.y;
+      previous->second = info;
+      OnMouseDrag({info});
+    }
+  }
+}
+
 bool IGraphicsWin::PlatformSupportsMultiTouch() const
 {
-  return GetSystemMetrics(SM_DIGITIZER) & NID_MULTI_INPUT;
+  return true; // WM_TOUCH is supported even without an attached digitizer (e.g. injection).
 }
 
 IPopupMenu* IGraphicsWin::GetItemMenu(long idx, long& idxInMenu, long& offsetIdx, IPopupMenu& baseMenu)

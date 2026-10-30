@@ -38,6 +38,9 @@ public:
   float GetPlatformWindowScale() const override { return GetScreenScale(); }
   // Zero follows HWND DPI; a positive host content scale takes precedence.
   void SetHostScreenScale(float scale);
+  // Native WM_TOUCH decoding; also used by injected-contact regression tests.
+  void ProcessTouchInput(const TOUCHINPUT* touches, UINT count);
+  void ClearTouchInput() { mDeltaCapture.clear(); }
 
   void PlatformResize(bool parentHasResized) override;
 
