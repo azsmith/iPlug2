@@ -103,17 +103,17 @@ inline bool IPlugAU::GetNumberFromDict(CFDictionaryRef pDict, const char* key, v
   return false;
 }
 
-inline bool IPlugAU::GetStrFromDict(CFDictionaryRef pDict, const char* key, char* value)
+inline bool IPlugAU::GetStrFromDict(CFDictionaryRef pDict, const char* key, WDL_String& value)
 {
   CFStrLocal cfKey(key);
   CFStringRef pValue = (CFStringRef) CFDictionaryGetValue(pDict, cfKey.Get());
-  if (pValue)
+  if (pValue && CFGetTypeID(pValue) == CFStringGetTypeID())
   {
     CStrLocal cStr(pValue);
-    strcpy(value, cStr.Get());
+    value.Set(cStr.Get());
     return true;
   }
-  value[0] = '\0';
+  value.Set("");
   return false;
 }
 
@@ -1012,8 +1012,9 @@ OSStatus IPlugAU::GetProperty(AudioUnitPropertyID propID, AudioUnitScope scope, 
       if (pData)
       {
         AUPreset* pAUPreset = (AUPreset*) pData;
-        pAUPreset->presetNumber = GetCurrentPresetIdx();
-        const char* name = GetPresetName(pAUPreset->presetNumber);
+        const bool user = mUserPresetName.GetLength() > 0;
+        pAUPreset->presetNumber = user ? -1 : GetCurrentPresetIdx();
+        const char* name = user ? mUserPresetName.Get() : GetPresetName(pAUPreset->presetNumber);
         pAUPreset->presetName = CFStringCreateWithCString(0, name, kCFStringEncodingUTF8);
       }
       return noErr;
@@ -1297,8 +1298,20 @@ OSStatus IPlugAU::SetProperty(AudioUnitPropertyID propID, AudioUnitScope scope, 
     case kAudioUnitProperty_CurrentPreset:               // 28,
     case kAudioUnitProperty_PresentPreset:               // 36,
     {
-      int presetIdx = ((AUPreset*) pData)->presetNumber;
-      RestorePreset(presetIdx);
+      const AUPreset* pAUPreset = (const AUPreset*) pData;
+      if (pAUPreset->presetNumber < 0)
+      {
+        // A host preset: nothing to load here (the host follows with ClassInfo), but its name
+        // is the one to report back until another preset is chosen.
+        if (pAUPreset->presetName)
+        {
+          CStrLocal name(pAUPreset->presetName);
+          mUserPresetName.Set(name.Get());
+        }
+        return noErr;
+      }
+      mUserPresetName.Set("");
+      RestorePreset(pAUPreset->presetNumber);
       return noErr;
     }
     case kAudioUnitProperty_OfflineRender:                // 37,
@@ -1469,7 +1482,7 @@ OSStatus IPlugAU::GetState(CFPropertyListRef* ppPropList)
   PutNumberInDict(pDict, kAUPresetTypeKey, &(plugType), kCFNumberSInt32Type);
   PutNumberInDict(pDict, kAUPresetSubtypeKey, &(plugSubType), kCFNumberSInt32Type);
   PutNumberInDict(pDict, kAUPresetManufacturerKey, &(plugManID), kCFNumberSInt32Type);
-  PutStrInDict(pDict, kAUPresetNameKey, GetPresetName(GetCurrentPresetIdx()));
+  PutStrInDict(pDict, kAUPresetNameKey, mUserPresetName.GetLength() ? mUserPresetName.Get() : GetPresetName(GetCurrentPresetIdx()));
 
   IByteChunk chunk;
   //InitChunkWithIPlugVer(&IPlugChunk); // TODO: IPlugVer should be in chunk!
@@ -1488,7 +1501,7 @@ OSStatus IPlugAU::SetState(CFPropertyListRef pPropList)
 {
   CFDictionaryRef pDict = (CFDictionaryRef) pPropList;
   int version, type, subtype, mfr;
-  char presetName[64];
+  WDL_String presetName;
   if (!GetNumberFromDict(pDict, kAUPresetVersionKey, &version, kCFNumberSInt32Type) ||
       !GetNumberFromDict(pDict, kAUPresetTypeKey, &type, kCFNumberSInt32Type) ||
       !GetNumberFromDict(pDict, kAUPresetSubtypeKey, &subtype, kCFNumberSInt32Type) ||
@@ -1502,7 +1515,8 @@ OSStatus IPlugAU::SetState(CFPropertyListRef pPropList)
     return kAudioUnitErr_InvalidPropertyValue;
   }
   
-  RestorePreset(presetName);
+  // A name that is not one of ours is a host preset: keep it so the host reads it back.
+  mUserPresetName.Set(RestorePreset(presetName.Get()) ? "" : presetName.Get());
 
   IByteChunk chunk;
 
@@ -1931,6 +1945,8 @@ void IPlugAU::EndInformHostOfParamChange(int idx)
 
 void IPlugAU::InformHostOfPresetChange()
 {
+  mUserPresetName.Set("");  // the plug-in chose a factory preset itself
+
   //InformListeners(kAudioUnitProperty_CurrentPreset, kAudioUnitScope_Global);
   InformListeners(kAudioUnitProperty_PresentPreset, kAudioUnitScope_Global);
 }

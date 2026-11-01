@@ -308,6 +308,23 @@ void IPlugAAX::RenderAudio(AAX_SIPlugRenderInfo* pRenderInfo, const TParamValPai
     else
       AttachBuffers(ERoute::kInput, 0, numInChannels, pRenderInfo->mAudioInputs, numSamples);
   }
+  else
+  {
+    // An instrument gets NO input buffers from AAX: the block above is the only thing that
+    // attaches them, and it does not run here. Say so explicitly, rather than leaving the
+    // constructor's blanket SetChannelConnections(kInput, .., true) standing over channels
+    // that point at nothing.
+    //
+    // Without this, NInChansConnected() reports the full input count while those channels
+    // were never attached, so any plugin that trusts the count reads whatever happens to be
+    // in the pointer array. That is not a null it can check for: the observed value was
+    // 0xf3. Pro Tools crashed on an Instrument-track insert this way, 2026-08-20 (Particle
+    // Chimes desktop, EXC_BAD_ACCESS in ProcessBlock reading inputs[1]).
+    //
+    // Mirrors what the AU path already does, and what the !IsInstrument() branch above does
+    // for the channels the host did not attach.
+    SetChannelConnections(ERoute::kInput, 0, MaxNChannels(ERoute::kInput), false);
+  }
     
   int maxNOutChans = MaxNChannels(ERoute::kOutput);
   
