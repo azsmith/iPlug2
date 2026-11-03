@@ -398,15 +398,19 @@ void IPlugAAX::RenderAudio(AAX_SIPlugRenderInfo* pRenderInfo, const TParamValPai
           IMidiMsg& msg = mMidiOutputQueue.Peek();
           
           AAX_CMidiPacket packet;
-          
-          packet.mIsImmediate = true; // TODO: how does this affect sample accuracy?
-          
+
+          // Timed, not immediate: mTimestamp is the sample offset into this buffer, so Pro Tools places the
+          // event where the plug-in made it rather than at the buffer's start.
+          packet.mIsImmediate = false;
+
           packet.mTimestamp = (uint32_t) msg.mOffset;
-          packet.mLength = 3;
-          
+          const int status = msg.StatusMsg();
+          packet.mLength = (status == IMidiMsg::kProgramChange || status == IMidiMsg::kChannelAftertouch) ? 2 : 3;
+
           packet.mData[0] = msg.mStatus;
           packet.mData[1] = msg.mData1;
-          packet.mData[2] = msg.mData2;
+          packet.mData[2] = packet.mLength > 2 ? msg.mData2 : 0;
+          packet.mData[3] = 0;
           
           midiOut->PostMIDIPacket (&packet);
           
@@ -429,7 +433,7 @@ void IPlugAAX::RenderAudio(AAX_SIPlugRenderInfo* pRenderInfo, const TParamValPai
             AAX_CMidiPacket packet;
             
             packet.mTimestamp = (uint32_t) mSysexBuf.mOffset;
-            packet.mIsImmediate = true;
+            packet.mIsImmediate = false;
             
             int b = 0;
             

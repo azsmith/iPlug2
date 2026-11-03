@@ -19,6 +19,12 @@
 #include "AAX_Errors.h"
 #include "AAX_Assert.h"
 
+// The MIDI output node's channel mask: one bit per channel the node uses (AAX_IComponentDescriptor::AddMIDINode).
+// All 16 by default, so a plug-in that sends on several channels declares them; config.h may narrow it.
+#ifndef AAX_MIDI_OUT_CHANNEL_MASK
+#define AAX_MIDI_OUT_CHANNEL_MASK 0xFFFF
+#endif
+
 #ifndef BUNDLE_ID
 #define BUNDLE_ID BUNDLE_DOMAIN "." BUNDLE_MFR ".aax." BUNDLE_NAME
 #endif
@@ -171,7 +177,7 @@ AAX_Result GetEffectDescriptions(AAX_ICollection* pC)
     
     setupInfo.mNeedsOutputMIDI = PLUG_DOES_MIDI_OUT;
     setupInfo.mOutputMIDINodeName = PLUG_NAME" Midi";
-    setupInfo.mOutputMIDIChannelMask = 0x0001;
+    setupInfo.mOutputMIDIChannelMask = AAX_MIDI_OUT_CHANNEL_MASK;
     
     setupInfo.mNeedsTransport = true;
     setupInfo.mLatency = PLUG_LATENCY;
