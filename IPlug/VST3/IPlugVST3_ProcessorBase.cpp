@@ -178,9 +178,9 @@ void IPlugVST3ProcessorBase::ProcessMidiOut(IPlugQueue<SysExData>& sysExQueue, S
         toAdd.midiCCOut.channel = msg.Channel();
         toAdd.sampleOffset = msg.mOffset;
         toAdd.midiCCOut.controlNumber = ControllerNumbers::kPitchBend;
-        int16 tmp = static_cast<int16> (msg.PitchWheel() * 0x3FFF);
-        toAdd.midiCCOut.value = (tmp & 0x7F);
-        toAdd.midiCCOut.value2 = ((tmp >> 7) & 0x7F);
+        // The raw 14-bit bend: LSB in value, MSB in value2 (PitchWheel() is -1..1, so scaling it sent centre as 0).
+        toAdd.midiCCOut.value = msg.mData1 & 0x7F;
+        toAdd.midiCCOut.value2 = msg.mData2 & 0x7F;
         pOutputEvents->addEvent(toAdd);
       }
 
