@@ -165,6 +165,19 @@ public:
         
         return mOwner.OnKeyDown(keyPress) ? Steinberg::kResultTrue : Steinberg::kResultFalse;
       }
+      // Escape too: REAPER closes the plug-in window on an Escape the plug-in declines, so an
+      // editor with a popover or panel open must get the chance to close that instead.
+      // keyMsg is reliable for Escape (it is a virtual key, unlike the characters above).
+      else if (keyMsg == Steinberg::VirtualKeyCodes::KEY_ESCAPE)
+      {
+        iplug::IKeyPress keyPress { "",
+          iplug::kVK_ESCAPE,
+          static_cast<bool>(modifiers & Steinberg::kShiftKey),
+          static_cast<bool>(modifiers & Steinberg::kCommandKey),
+          static_cast<bool>(modifiers & Steinberg::kAlternateKey)};
+
+        return mOwner.OnKeyDown(keyPress) ? Steinberg::kResultTrue : Steinberg::kResultFalse;
+      }
       else
       {
         return Steinberg::kResultFalse;
