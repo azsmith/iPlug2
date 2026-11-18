@@ -948,9 +948,37 @@ void IGraphics::Draw(const IRECT& bounds, float scale)
 #endif
 }
 
+bool IGraphics::RetryDeferredUIOpen(void* pPlatformContext)
+{
+  if (!mUIOpenDeferred)
+    return true;
+
+  // Creating a Metal context is not free; while it keeps failing, try about twice a second
+  // at 60 fps rather than on every tick.
+  if ((mDeferredOpenTicks++ % 30) != 0)
+    return false;
+
+  OnViewInitialized(pPlatformContext);
+
+  if (!DrawContextReady())
+    return false;
+
+  mUIOpenDeferred = false;
+  mDeferredOpenTicks = 0;
+  DrawResize(); // the main framebuffer needs the context; SetScreenScale ran without one
+  // A plug-in may have built controls out of band meanwhile (e.g. from OnParentWindowResize),
+  // holding empty bitmaps and no fonts; a layout that returns early when NControls() is
+  // non-zero would keep them. Start clean, as a close and reopen would.
+  RemoveAllControls();
+  GetDelegate()->LayoutUI(this);
+  GetDelegate()->OnUIOpen();
+  SetAllControlsDirty();
+  return true;
+}
+
 void IGraphics::Draw(IRECTList& rects)
 {
-  if (!rects.Size())
+  if (!rects.Size() || !DrawContextReady())
     return;
   
   float scale = GetBackingPixelScale();
@@ -1761,6 +1789,9 @@ WDL_TypedBuf<uint8_t> IGraphics::LoadResource(const char* fileNameOrResID, const
 
 IBitmap IGraphics::LoadBitmap(const char* name, int nStates, bool framesAreHorizontal, int targetScale)
 {
+  if (!DrawContextReady())
+    return IBitmap(); // no context to create a texture in: invalid IBitmap, as for an unsupported type
+
   if (targetScale == 0)
     targetScale = GetRoundedScreenScale();
 
@@ -1823,6 +1854,9 @@ IBitmap IGraphics::LoadBitmap(const char* name, int nStates, bool framesAreHoriz
 
 IBitmap IGraphics::LoadBitmap(const char *name, const void *pData, int dataSize, int nStates, bool framesAreHorizontal, int targetScale)
 {
+  if (!DrawContextReady())
+    return IBitmap(); // as LoadBitmap(name, ...) above
+
   if (targetScale == 0)
     targetScale = GetRoundedScreenScale();
 

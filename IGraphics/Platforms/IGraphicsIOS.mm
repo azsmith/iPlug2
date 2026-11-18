@@ -119,10 +119,20 @@ void* IGraphicsIOS::OpenWindow(void* pParent)
 #endif
   
   SetScreenScale(scale);
-  
-  GetDelegate()->LayoutUI(this);
-  GetDelegate()->OnUIOpen();
-  
+
+  // No draw context (NanoVG's Metal context can fail to create): laying out would load bitmaps
+  // into a null context and crash. Leave the view empty; its draw tick retries and lays out then.
+  mUIOpenDeferred = !DrawContextReady();
+  if (mUIOpenDeferred)
+  {
+    DBGMSG("IGraphicsIOS: no draw context at OpenWindow, deferring LayoutUI\n");
+  }
+  else
+  {
+    GetDelegate()->LayoutUI(this);
+    GetDelegate()->OnUIOpen();
+  }
+
   [view setMultipleTouchEnabled:MultiTouchEnabled()];
 
   if (pParent)
