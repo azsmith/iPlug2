@@ -100,9 +100,19 @@ void* IGraphicsMac::OpenWindow(void* pParent)
   ActivateGLContext();
   OnViewInitialized([pView layer]);
   SetScreenScale([[NSScreen mainScreen] backingScaleFactor]);
-  GetDelegate()->LayoutUI(this);
-  UpdateTooltips();
-  GetDelegate()->OnUIOpen();
+  // No draw context (NanoVG's Metal context can fail to create): laying out would load bitmaps
+  // into a null context and crash. Leave the view empty; -render retries and lays out then.
+  mUIOpenDeferred = !DrawContextReady();
+  if (mUIOpenDeferred)
+  {
+    DBGMSG("IGraphicsMac: no draw context at OpenWindow, deferring LayoutUI\n");
+  }
+  else
+  {
+    GetDelegate()->LayoutUI(this);
+    UpdateTooltips();
+    GetDelegate()->OnUIOpen();
+  }
   
   if (pParent)
   {

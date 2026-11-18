@@ -277,6 +277,9 @@ bool IGraphicsNanoVG::BitmapExtSupported(const char* ext)
 
 IBitmap IGraphicsNanoVG::LoadBitmap(const char* name, int nStates, bool framesAreHorizontal, int targetScale)
 {
+  if (!mVG)
+    return IBitmap(); // no context to create a texture in (see IGraphics::DrawContextReady)
+
   if (targetScale == 0)
     targetScale = GetRoundedScreenScale();
 
@@ -654,6 +657,11 @@ void IGraphicsNanoVG::PrepareAndMeasureText(const IText& text, const char* str, 
 
 float IGraphicsNanoVG::DoMeasureText(const IText& text, const char* str, IRECT& bounds) const
 {
+  // Controls measure text when attached (e.g. IVectorBase::MakeRects); without a context
+  // report nothing. The deferred LayoutUI rebuilds those controls once a context exists.
+  if (!mVG)
+    return 0.f;
+
   IRECT r = bounds;
   double x, y;
   PrepareAndMeasureText(text, str, bounds, x, y);
@@ -746,6 +754,8 @@ void IGraphicsNanoVG::PathFill(const IPattern& pattern, const IFillOptions& opti
 
 bool IGraphicsNanoVG::LoadAPIFont(const char* fontID, const PlatformFontPtr& font)
 {
+  if (!mVG)
+    return false; // fonts live in the context; the deferred LayoutUI loads them again
   StaticStorage<IFontData>::Accessor storage(sFontCache);
   IFontData* cached = storage.Find(fontID);
     

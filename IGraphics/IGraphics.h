@@ -372,6 +372,21 @@ public:
    * See draw class implementation headers (e.g. IGraphicsNanoVG.h) for what you can cast the void pointer to */
   virtual void* GetDrawContext() = 0;
 
+  /** @return false while the drawing backend has no usable context (NanoVG returns false when
+   * creating its Metal/GL context failed). While false, Draw and LoadBitmap do nothing, and the
+   * Apple platforms defer LayoutUI/OnUIOpen until RetryDeferredUIOpen succeeds. */
+  virtual bool DrawContextReady() const { return true; }
+
+  /** Called from the platform view's draw tick while the UI open is deferred: re-runs
+   * OnViewInitialized (throttled) and, once the context exists, the deferred DrawResize,
+   * LayoutUI and OnUIOpen.
+   * @param pPlatformContext What OpenWindow passed to OnViewInitialized (the view's layer)
+   * @return true when the UI is open */
+  bool RetryDeferredUIOpen(void* pPlatformContext);
+
+  /** @return true if OpenWindow could not create a draw context and the UI open is pending */
+  bool UIOpenDeferred() const { return mUIOpenDeferred; }
+
   /** @return A CString representing the Drawing API in use e.g. "NanoVG" */
   virtual const char* GetDrawingAPIStr() = 0;
   
@@ -1863,6 +1878,7 @@ private:
   bool mResizingInProcess = false;
   bool mLayoutOnResize = false;
   bool mEnableMultiTouch = false;
+  int mDeferredOpenTicks = 0;
   EUIResizerMode mGUISizeMode = EUIResizerMode::Scale;
   double mPrevTimestamp = 0.;
   IKeyHandlerFunc mKeyHandlerFunc = nullptr;
@@ -1871,6 +1887,7 @@ private:
   
 protected:
   IGEditorDelegate* mDelegate;
+  bool mUIOpenDeferred = false; // OpenWindow had no draw context; see RetryDeferredUIOpen
   bool mCursorHidden = false;
   bool mCursorLock = false;
   bool mTabletInput = false;

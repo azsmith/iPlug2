@@ -464,6 +464,15 @@ extern StaticStorage<CoreTextFontDescriptor> sFontDescriptorCache;
     mGraphics->SetPlatformContext(UIGraphicsGetCurrentContext());
     IGraphics::ScopedGLContext scopedGLContext{mGraphics};
 
+    // OpenWindow found no draw context and deferred the layout: retry, and draw nothing until
+    // the UI is open. OpenWindow set multipleTouchEnabled before the layout chose it; redo it.
+    if (mGraphics->UIOpenDeferred())
+    {
+      if (!mGraphics->RetryDeferredUIOpen((__bridge void*) self.layer))
+        return;
+      [self setMultipleTouchEnabled:mGraphics->MultiTouchEnabled()];
+    }
+
     if (mGraphics->IsDirty(rects))
     {
       mGraphics->SetAllControlsClean();

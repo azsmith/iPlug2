@@ -124,6 +124,7 @@ public:
   
   IColor GetPoint(int x, int y) override;
   void* GetDrawContext() override { return (void*) mVG; }
+  bool DrawContextReady() const override { return mVG != nullptr; }
     
   IBitmap LoadBitmap(const char* name, int nStates, bool framesAreHorizontal, int targetScale) override;
   void ReleaseBitmap(const IBitmap& bitmap) override { }; // NO-OP

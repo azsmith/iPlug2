@@ -856,6 +856,15 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink, const CVTimeSt
   if ((mRenderTickCount % 300) == 0)
     os_log(WobblesEditorLog(), "render tick=%lu", mRenderTickCount);
 
+  // OpenWindow found no draw context and deferred the layout: retry, draw nothing until open.
+  if (mGraphics->UIOpenDeferred())
+  {
+    IGraphics::ScopedGLContext scopedGLCtx {mGraphics};
+    if (!mGraphics->RetryDeferredUIOpen((__bridge void*) [self layer]))
+      return;
+    mGraphics->UpdateTooltips();
+  }
+
   mDirtyRects.Clear();
 
   if (mGraphics->IsDirty(mDirtyRects))
