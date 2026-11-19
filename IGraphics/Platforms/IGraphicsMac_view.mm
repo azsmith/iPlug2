@@ -1014,11 +1014,22 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink, const CVTimeSt
   const NSRect content = pWindow ? [[pWindow contentView] frame] : NSZeroRect;
   const NSPoint cursor = [NSEvent mouseLocation];
   const NSPoint clickOnScreen = pWindow ? [pWindow convertPointToScreen:inWindow] : NSZeroPoint;
+  // -clickCount throws for enter/exit/move events (it crashed Logic's AU host); only mouse
+  // button events carry one.
+  long clickCount = -1;
+  switch ([pEvent type])
+  {
+    case NSEventTypeLeftMouseDown: case NSEventTypeLeftMouseUp: case NSEventTypeLeftMouseDragged:
+    case NSEventTypeRightMouseDown: case NSEventTypeRightMouseUp: case NSEventTypeRightMouseDragged:
+    case NSEventTypeOtherMouseDown: case NSEventTypeOtherMouseUp: case NSEventTypeOtherMouseDragged:
+      clickCount = (long)[pEvent clickCount]; break;
+    default: break;
+  }
   os_log(WobblesMouseLog(),
          "%{public}s cc=%ld win=(%.1f,%.1f) view=(%.1f,%.1f) ig=(%.1f,%.1f) captured=%d "
          "viewInWin=(%.0f,%.0f %.0fx%.0f) content=(%.0fx%.0f) winFrame=(%.0f,%.0f %.0fx%.0f) key=%d "
          "cursorMinusClick=(%.1f,%.1f) evWin=%ld",
-         what, (long)[pEvent clickCount], inWindow.x, inWindow.y, inView.x, inView.y,
+         what, clickCount, inWindow.x, inWindow.y, inView.x, inView.y,
          inView.x / scale, inView.y / scale, mGraphics ? (int)mGraphics->ControlIsCaptured() : -1,
          viewInWindow.origin.x, viewInWindow.origin.y, viewInWindow.size.width, viewInWindow.size.height,
          content.size.width, content.size.height, winFrame.origin.x, winFrame.origin.y,
