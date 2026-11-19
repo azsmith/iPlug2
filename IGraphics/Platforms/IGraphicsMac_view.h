@@ -132,6 +132,8 @@ using namespace igraphics;
   NSCursor* mMoveCursor;
   float mPrevX, mPrevY;
   bool mMouseOutDuringDrag;
+  BOOL mLoggedDrag; // mouse diagnostics: first drag of a press logged
+  BOOL mLoggedMove; // mouse diagnostics: first move after an enter logged
   // Screen-position error of this view's window, measured at the last mouse-down; see
   // IGraphicsMac_popupanchor.h and -recordPopupAnchorCorrection:.
   NSPoint mPopupAnchorCorrection;
@@ -167,6 +169,7 @@ using namespace igraphics;
 - (void) updateTrackingAreas;
 - (void) mouseEntered:(NSEvent*) pEvent;
 - (void) mouseExited:(NSEvent*) pEvent;
+- (void) logMouse: (const char*) what event: (NSEvent*) pEvent;
 - (void) mouseDown: (NSEvent*) pEvent;
 - (void) mouseUp: (NSEvent*) pEvent;
 - (void) mouseDragged: (NSEvent*) pEvent;

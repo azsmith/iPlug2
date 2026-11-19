@@ -36,6 +36,18 @@ static os_log_t WobblesEditorLog(void)
   return sLog;
 }
 
+
+// Mouse-delivery diagnostics (Crooked Comb, Logic two-panel licence badge, 2026-11-18): where
+// AppKit put each press, release and the first drag/move of a run, in window, view and IGraphics
+// coordinates, with the window and view geometry and whether a control already held the mouse.
+// Default level, presses only, so it costs nothing between clicks. Pull with:
+//   log show --predicate 'subsystem == "com.plasticfactory.wobbles" AND category == "mouse"' --style compact --last 30m
+static os_log_t WobblesMouseLog(void)
+{
+  static os_log_t sLog = os_log_create("com.plasticfactory.wobbles", "mouse");
+  return sLog;
+}
+
 static int MacKeyCodeToVK(int code)
 {
   switch (code)
@@ -704,6 +716,13 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink, const CVTimeSt
   return YES;
 }
 
+// A press anywhere on the editor is the editor's, never a window drag, whatever the host's window
+// does with its background (AppKit's default derives this from opacity, which follows mGraphics).
+- (BOOL) mouseDownCanMoveWindow
+{
+  return NO;
+}
+
 // The redraw timer's life is bound to the view actually being in a window, not to
 // construction (see -initWithIGraphics / -setTimer). This is also where we recover a view
 // that was built off-thread and/or before its window was sized: force the Metal drawable to
@@ -939,6 +958,8 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink, const CVTimeSt
 
 - (void) mouseEntered: (NSEvent*) pEvent
 {
+  mLoggedMove = NO;
+  [self logMouse:"enter" event:pEvent];
   mMouseOutDuringDrag = false;
   
   if (mGraphics)
@@ -949,6 +970,7 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink, const CVTimeSt
 
 - (void) mouseExited: (NSEvent*) pEvent
 {
+  [self logMouse:"exit" event:pEvent];
   if (mGraphics)
   {
     if (!mGraphics->ControlIsCaptured())
@@ -981,8 +1003,33 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink, const CVTimeSt
   mPopupAnchorCorrectionTime = [NSDate timeIntervalSinceReferenceDate];
 }
 
+- (void) logMouse: (const char*) what event: (NSEvent*) pEvent
+{
+  NSWindow* pWindow = [self window];
+  const NSPoint inWindow = [pEvent locationInWindow];
+  const NSPoint inView = [self convertPoint:inWindow fromView:nil];
+  const float scale = mGraphics ? mGraphics->GetDrawScale() : 1.f;
+  const NSRect viewInWindow = [self convertRect:[self bounds] toView:nil];
+  const NSRect winFrame = pWindow ? [pWindow frame] : NSZeroRect;
+  const NSRect content = pWindow ? [[pWindow contentView] frame] : NSZeroRect;
+  const NSPoint cursor = [NSEvent mouseLocation];
+  const NSPoint clickOnScreen = pWindow ? [pWindow convertPointToScreen:inWindow] : NSZeroPoint;
+  os_log(WobblesMouseLog(),
+         "%{public}s cc=%ld win=(%.1f,%.1f) view=(%.1f,%.1f) ig=(%.1f,%.1f) captured=%d "
+         "viewInWin=(%.0f,%.0f %.0fx%.0f) content=(%.0fx%.0f) winFrame=(%.0f,%.0f %.0fx%.0f) key=%d "
+         "cursorMinusClick=(%.1f,%.1f) evWin=%ld",
+         what, (long)[pEvent clickCount], inWindow.x, inWindow.y, inView.x, inView.y,
+         inView.x / scale, inView.y / scale, mGraphics ? (int)mGraphics->ControlIsCaptured() : -1,
+         viewInWindow.origin.x, viewInWindow.origin.y, viewInWindow.size.width, viewInWindow.size.height,
+         content.size.width, content.size.height, winFrame.origin.x, winFrame.origin.y,
+         winFrame.size.width, winFrame.size.height, pWindow ? (int)[pWindow isKeyWindow] : -1,
+         cursor.x - clickOnScreen.x, cursor.y - clickOnScreen.y, (long)[pEvent windowNumber]);
+}
+
 - (void) mouseDown: (NSEvent*) pEvent
 {
+  mLoggedDrag = NO;
+  [self logMouse:"down" event:pEvent];
   IMouseInfo info = [self getMouseLeft:pEvent];
   [self recordPopupAnchorCorrection:pEvent];
   if (mGraphics)
@@ -1001,6 +1048,7 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink, const CVTimeSt
 
 - (void) mouseUp: (NSEvent*) pEvent
 {
+  [self logMouse:"up" event:pEvent];
   IMouseInfo info = [self getMouseLeft:pEvent];
   if (mGraphics)
   {
@@ -1017,6 +1065,7 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink, const CVTimeSt
 
 - (void) mouseDragged: (NSEvent*) pEvent
 {
+  if (!mLoggedDrag) { mLoggedDrag = YES; [self logMouse:"drag" event:pEvent]; }
   // Cache previous values before retrieving the new mouse position (which will update them)
   float prevX = mPrevX;
   float prevY = mPrevY;
@@ -1032,6 +1081,7 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink, const CVTimeSt
 
 - (void) rightMouseDown: (NSEvent*) pEvent
 {
+  [self logMouse:"rdown" event:pEvent];
   IMouseInfo info = [self getMouseRight:pEvent];
   [self recordPopupAnchorCorrection:pEvent];
   if (mGraphics)
@@ -1076,6 +1126,7 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink, const CVTimeSt
 
 - (void) mouseMoved: (NSEvent*) pEvent
 {
+  if (!mLoggedMove) { mLoggedMove = YES; [self logMouse:"move" event:pEvent]; }
   IMouseInfo info = [self getMouseLeft:pEvent];
   if (mGraphics)
     mGraphics->OnMouseOver(info.x, info.y, info.ms);
